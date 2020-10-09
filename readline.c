@@ -7,13 +7,15 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "./readline.h"
+
 /*
  * Read a line from standard input into a newly allocated 
  * array of char. The allocation is via malloc(size_t), the array 
  * must be freed via free(void*).
  */
 
-char *readline(void) {
+char* readline(void) {
   #define BUFFER_LENGTH 256
   static char buffer[BUFFER_LENGTH];
   int offset = 0;
@@ -38,7 +40,7 @@ char *readline(void) {
  * Returns a null-terminated array of words.
  * The array has been allocated by malloc, it must be freed by free.
  */
-char **split_in_words(char *line) {
+char** split_in_words(char *line) {
   #define MAX_NWORDS 256
   static char* words[MAX_NWORDS];
   int nwords=0;
@@ -117,7 +119,7 @@ char **split_in_words(char *line) {
 
 
 
-int main(int argc, char** argv, char**envp) {
+/*int main(int argc, char** argv, char**envp) {
 
   for (int i=0;envp[i]!=NULL;i++)
     printf("env[%d]=%s\n",i,envp[i]);
@@ -141,4 +143,5 @@ int main(int argc, char** argv, char**envp) {
     free(line);
   }
   return 0;
-}
+  
+}*/

@@ -9,18 +9,23 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
+#include "./readline.h"
+
 int main(int argc, char** argv, char**envp) {
-  int pid_fils=fork();
-  int status;
-  if(pid_fils<0)
-    perror("Erreur");
-  else{
-    if(pid_fils==0){
-      printf("Fils\n");
-    }else{
-      int new_pid=wait(&status);
-      printf("Father and my son who died is %d and was %d\n", new_pid, pid_fils);
+  for (;;) {
+    printf("> ");
+    fflush(stdout);
+    char* line = readline();
+    printf("%s\n", line);
+    char** words = split_in_words(line);
+    for (int i=0;words[i]!=NULL;i++){
+      printf("[%s], ", words[i]);
+      
     }
+
+    printf("\n");
+    free(words);
+    free(line);
   }
   return 0;
 }
