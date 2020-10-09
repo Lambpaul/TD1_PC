@@ -18,6 +18,20 @@ int main(int argc, char** argv, char**envp) {
     char* line = readline();
     printf("%s\n", line);
     char** words = split_in_words(line);
+    if(strcmp(words[0],"cd")==0){
+        int err = chdir(words[1]);
+        if(err==-1){
+          printf("Erreur: impossible de se déplacer dans %s\n",words[1]);
+        }else{
+          printf("cd DONE.\n");
+        }
+    }
+    else{
+      if(strcmp(words[0],"pwd")==0){
+        char s[100];
+        printf("%s\n",getcwd(s,100));
+      }
+    }
     for (int i=0;words[i]!=NULL;i++){
       printf("[%s], ", words[i]);
       
