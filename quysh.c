@@ -13,6 +13,8 @@ int processCommand(char *line, char argc, char **argv, char **envp);
 int execProcess(char *path, char **argv, char **envp);
 char *getPwd();
 int printShellPrefix();
+int fileExists(char *filename);
+int binExists(char *filename);
 
 int main(int argc, char **argv, char **envp)
 {
@@ -68,23 +70,22 @@ int processCommand(char *line, char argc, char **argv, char **envp)
     {
         printf("%s\n", getPwd());
     }
-    else if (strcmp(words[0], "ls") == 0)
+    else if (strcmp(words[0], "print") == 0)
     {
-        char *args[3];
-        /*
-        args[0] = "ls";
-        args[1] = "-al";
-        args[2] = argv[1];*/
-        execProcess("/bin/ls", words, envp);
-    }
-    else if (strcmp(words[0], "print") == 0) {
-        int i = 0;
+        //int i = 0;
         printf("%s\n", envp[0]);
         /*
         while (envp[i] != NULL) {
             char* env_var = envp[i];
             printf("%s\n", env_var);
         }*/
+    }
+    else if (binExists(words[0]))
+    {
+        char binaryPath[50];
+        strcpy(binaryPath, "/bin/");
+        strcat(binaryPath, words[0]);
+        execProcess(binaryPath, words, envp);
     }
     else
     {
@@ -125,10 +126,11 @@ int execProcess(char *path, char **argv, char **envp)
     return 0;
 }
 
-int isCommand(char** cmd_obj, char* name, int min_args, int max_args) {
+int isCommand(char **cmd_obj, char *name, int min_args, int max_args)
+{
     if (strcmp(cmd_obj[0], name) != 0)
         return 0;
-    
+
     if (cmd_obj[min_args] == NULL)
         return 0;
 
@@ -144,9 +146,17 @@ char *getPwd()
     return getcwd(cwd, sizeof(cwd));
 }
 
-int file_exists (char *filename) {
-  struct stat   buffer;   
-  return (stat (filename, &buffer) == 0);
+int binExists(char *filename)
+{
+    char binaryPath[50];
+    strcpy(binaryPath, "/bin/");
+    strcat(binaryPath, filename);
+    return fileExists(binaryPath);
+}
+
+int fileExists(char *filename)
+{
+    return (access(filename, F_OK) != -1);
 }
 
 int printShellPrefix()
@@ -159,7 +169,7 @@ int printShellPrefix()
     printf("\033[0m");
 
     printf(":");
-    
+
     printf("\033[1;36m");
     printf("%s", cwd);
     printf("\033[0m");
