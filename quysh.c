@@ -7,7 +7,7 @@
 #include "readline.h"
 
 #define SHELL_NAME "quysh"
-#define DEBUG 1
+#define DEBUG 0
 
 typedef struct path
 {
@@ -26,7 +26,7 @@ int execProcess(char *path, char **argv, char **envp);
 char *getPwd();
 int printShellPrefix();
 int fileExists(char *filename);
-int binExists(char *filename, ppaths_t paths);
+char *getBinPath(char *filename, ppaths_t paths);
 
 int main(int argc, char **argv, char **envp)
 {
@@ -156,16 +156,14 @@ int processCommand(char *line, ppaths_t paths, char **envp)
             printf("%s\n", env_var);
         }*/
     }
-    else if (binExists(words[0], paths))
-    {
-        char binaryPath[50];
-        strcpy(binaryPath, "/bin/");
-        strcat(binaryPath, words[0]);
-        execProcess(binaryPath, words, envp);
-    }
     else
     {
-        printf("\nCommand '%s' not found.\n\nTry: sudo apt install <deb name>\n\n", words[0]);
+        char *binPath = getBinPath(words[0], paths);
+
+        if (binPath != NULL)
+            execProcess(binPath, words, envp);
+        else
+            printf("\nCommand '%s' not found.\n\nTry: sudo apt install <deb name>\n\n", words[0]);
     }
 
     free(words);
@@ -222,42 +220,10 @@ char *getPwd()
     return getcwd(cwd, sizeof(cwd));
 }
 
-// TODO: Return PATH of Bin -> More Optimized
 // TODO: Last path is broken
-int binExists(char *filename, ppaths_t paths)
+char *getBinPath(char *filename, ppaths_t paths)
 {
-    char binaryPath[512];
-    int found = 0;
-    ppath_t path_it = paths->first;
-
-    while (path_it != NULL && !found)
-    {
-        strcpy(binaryPath, path_it->path_text);
-        strcat(binaryPath, "/");
-        strcat(binaryPath, filename);
-
-        if (fileExists(binaryPath))
-        {
-            if (DEBUG)
-            {
-                printf("Located %s at %s\n", filename, binaryPath);
-            }
-            return 1;
-        }
-
-        printf("%s\n", binaryPath);
-        path_it = path_it->next;
-    }
-
-    /*strcpy(binaryPath, "/bin/");
-    strcat(binaryPath, filename);
-    return fileExists(binaryPath);*/
-    return 0;
-}
-
-const char *getBinPath(char *filename, ppaths_t paths)
-{
-    char binaryPath[512];
+    char *binaryPath = malloc(1024 * sizeof(char));
     ppath_t path_it = paths->first;
 
     while (path_it != NULL)
@@ -269,19 +235,13 @@ const char *getBinPath(char *filename, ppaths_t paths)
         if (fileExists(binaryPath))
         {
             if (DEBUG)
-            {
                 printf("Located %s at %s\n", filename, binaryPath);
-            }
+
             return binaryPath;
         }
-
-        printf("%s\n", binaryPath);
         path_it = path_it->next;
     }
 
-    /*strcpy(binaryPath, "/bin/");
-    strcat(binaryPath, filename);
-    return fileExists(binaryPath);*/
     return NULL;
 }
 
