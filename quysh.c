@@ -7,19 +7,95 @@
 #include "readline.h"
 
 #define SHELL_NAME "quysh"
-#define DEBUG 0
+#define DEBUG 1
 
-int processCommand(char *line, char argc, char **argv, char **envp);
+typedef struct path
+{
+    char *path_text;
+    struct path *next;
+} path_t, *ppath_t;
+
+typedef struct paths
+{
+    int count;
+    ppath_t first;
+} paths_t, *ppaths_t;
+
+int processCommand(char *line, ppaths_t paths, char **envp);
 int execProcess(char *path, char **argv, char **envp);
 char *getPwd();
 int printShellPrefix();
 int fileExists(char *filename);
-int binExists(char *filename);
+int binExists(char *filename, ppaths_t paths);
 
 int main(int argc, char **argv, char **envp)
 {
-    /*for (int i=0;envp[i]!=NULL;i++)
-    printf("env[%d]=%s\n",i,envp[i]);
+    const char *PATH_RAW = getenv("PATH");     // ??
+    const int PATH_RAW_LEN = strlen(PATH_RAW); // O(n)
+    const char PATH_DELIM[2] = ":";
+
+    char *PATH_RAW_CPY = malloc(PATH_RAW_LEN * sizeof(char));
+
+    char *str_it;    // An iterator over the RAW_PATH where elements are delimited by the PATH_DELIM character
+    ppath_t path_it; // A path iterator
+
+    ppaths_t paths = malloc(sizeof(paths_t));
+    paths->count = 0;
+    paths->first = NULL;
+
+    // Computes a copy of the RAW_PATH
+    strcpy(PATH_RAW_CPY, PATH_RAW);
+
+    if (DEBUG)
+        printf("All paths: \n");
+
+    // Splits the RAW_PATH into multiple individual path structures
+    str_it = strtok(PATH_RAW_CPY, PATH_DELIM);
+    path_it = malloc(sizeof(path_t));
+    while (str_it != NULL)
+    {
+        // Initializes a path
+        path_it->path_text = malloc(sizeof(char));
+        path_it->next = NULL;
+
+        // References the first path to the paths structure
+        if (paths->count == 0)
+            paths->first = path_it;
+
+        // Copies the values from the RAW_PATH iterator to our custom path structure
+        strcpy(path_it->path_text, str_it);
+        paths->count++;
+
+        if (DEBUG)
+            printf("\t%s\n", path_it->path_text);
+
+        // Continues to the next entry
+        str_it = strtok(NULL, PATH_DELIM);
+        if (str_it != NULL)
+            path_it->next = malloc(sizeof(path_t));
+        path_it = path_it->next;
+    }
+
+    if (DEBUG)
+    {
+        path_it = paths->first;
+        while (path_it != NULL)
+        {
+            int i = 0;
+            printf("\t%s :\n\n\t\t", path_it->path_text);
+            while (path_it->path_text[i] != 0)
+            {
+                printf("%d(%c) ", path_it->path_text[i], path_it->path_text[i]);
+                i++;
+            }
+            printf("\n\n");
+            path_it = path_it->next;
+        }
+    }
+
+    /*
+    for (int i = 0; envp[i] != NULL; i++)
+        printf("env[%d]=%s\n", i, envp[i]);
     printf("\n");*/
 
     // set stdout without buffering so what is printed
@@ -33,14 +109,14 @@ int main(int argc, char **argv, char **envp)
         fflush(stdout);
         char *line = readline();
 
-        processCommand(line, argc, argv, envp);
+        processCommand(line, paths, envp);
 
         free(line);
     }
     return 0;
 }
 
-int processCommand(char *line, char argc, char **argv, char **envp)
+int processCommand(char *line, ppaths_t paths, char **envp)
 {
     char **words = split_in_words(line);
 
@@ -80,7 +156,7 @@ int processCommand(char *line, char argc, char **argv, char **envp)
             printf("%s\n", env_var);
         }*/
     }
-    else if (binExists(words[0]))
+    else if (binExists(words[0], paths))
     {
         char binaryPath[50];
         strcpy(binaryPath, "/bin/");
@@ -146,12 +222,67 @@ char *getPwd()
     return getcwd(cwd, sizeof(cwd));
 }
 
-int binExists(char *filename)
+// TODO: Return PATH of Bin -> More Optimized
+// TODO: Last path is broken
+int binExists(char *filename, ppaths_t paths)
 {
-    char binaryPath[50];
-    strcpy(binaryPath, "/bin/");
+    char binaryPath[512];
+    int found = 0;
+    ppath_t path_it = paths->first;
+
+    while (path_it != NULL && !found)
+    {
+        strcpy(binaryPath, path_it->path_text);
+        strcat(binaryPath, "/");
+        strcat(binaryPath, filename);
+
+        if (fileExists(binaryPath))
+        {
+            if (DEBUG)
+            {
+                printf("Located %s at %s\n", filename, binaryPath);
+            }
+            return 1;
+        }
+
+        printf("%s\n", binaryPath);
+        path_it = path_it->next;
+    }
+
+    /*strcpy(binaryPath, "/bin/");
     strcat(binaryPath, filename);
-    return fileExists(binaryPath);
+    return fileExists(binaryPath);*/
+    return 0;
+}
+
+const char *getBinPath(char *filename, ppaths_t paths)
+{
+    char binaryPath[512];
+    ppath_t path_it = paths->first;
+
+    while (path_it != NULL)
+    {
+        strcpy(binaryPath, path_it->path_text);
+        strcat(binaryPath, "/");
+        strcat(binaryPath, filename);
+
+        if (fileExists(binaryPath))
+        {
+            if (DEBUG)
+            {
+                printf("Located %s at %s\n", filename, binaryPath);
+            }
+            return binaryPath;
+        }
+
+        printf("%s\n", binaryPath);
+        path_it = path_it->next;
+    }
+
+    /*strcpy(binaryPath, "/bin/");
+    strcat(binaryPath, filename);
+    return fileExists(binaryPath);*/
+    return NULL;
 }
 
 int fileExists(char *filename)
