@@ -1,3 +1,18 @@
+/*
+    This program is a custom shell named QuYsh.
+    Its name originates from the "Quiche" which is a famous french dish and the "sh" from bash.
+    As for the origin of the 'Y' linking the two words, it must remains a secret :x
+
+    @ Authors:
+        Corentin HUMBERT
+        Paul LAMBERT
+    
+    @ Last Modification:
+        24-07-2020 (DMY Formats)
+ 
+    @ Version: 0.4
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6,8 +21,13 @@
 #include <sys/wait.h>
 #include "readline.h"
 
+#define MAX_PATH_LEN 4096
+#define EXIT_SIG 42
 #define SHELL_NAME "quysh"
 #define DEBUG 0
+
+#define BIN_FOREGROUND 0
+#define BIN_BACKGROUND 1
 
 typedef struct path
 {
@@ -22,7 +42,7 @@ typedef struct paths
 } paths_t, *ppaths_t;
 
 int processCommand(char *line, ppaths_t paths, char **envp);
-int execProcess(char *path, char **argv, char **envp);
+int execProcess(char *path, int state, char **argv, char **envp);
 char *getPwd();
 int printShellPrefix();
 int fileExists(char *filename);
@@ -55,7 +75,7 @@ int main(int argc, char **argv, char **envp)
     while (str_it != NULL)
     {
         // Initializes a path
-        path_it->path_text = malloc(sizeof(char));
+        path_it->path_text = malloc(MAX_PATH_LEN * sizeof(char));
         path_it->next = NULL;
 
         // References the first path to the paths structure
@@ -76,23 +96,6 @@ int main(int argc, char **argv, char **envp)
         path_it = path_it->next;
     }
 
-    if (DEBUG)
-    {
-        path_it = paths->first;
-        while (path_it != NULL)
-        {
-            int i = 0;
-            printf("\t%s :\n\n\t\t", path_it->path_text);
-            while (path_it->path_text[i] != 0)
-            {
-                printf("%d(%c) ", path_it->path_text[i], path_it->path_text[i]);
-                i++;
-            }
-            printf("\n\n");
-            path_it = path_it->next;
-        }
-    }
-
     /*
     for (int i = 0; envp[i] != NULL; i++)
         printf("env[%d]=%s\n", i, envp[i]);
@@ -109,16 +112,34 @@ int main(int argc, char **argv, char **envp)
         fflush(stdout);
         char *line = readline();
 
-        processCommand(line, paths, envp);
+        int fb = processCommand(line, paths, envp);
+        if (fb == EXIT_SIG)
+            break;
 
         free(line);
     }
+
+    path_it = paths->first;
+    ppath_t prev_pt;
+
+    while (path_it != NULL)
+    {
+        free(path_it->path_text);
+        prev_pt = path_it;
+        path_it = path_it->next;
+        free(prev_pt);
+    }
+    free(paths);
+
+    free(PATH_RAW_CPY);
+
     return 0;
 }
 
 int processCommand(char *line, ppaths_t paths, char **envp)
 {
     char **words = split_in_words(line);
+    int fb = 0;
 
     if (DEBUG)
     {
@@ -148,34 +169,85 @@ int processCommand(char *line, ppaths_t paths, char **envp)
     }
     else if (strcmp(words[0], "print") == 0)
     {
-        //int i = 0;
-        printf("%s\n", envp[0]);
-        /*
-        while (envp[i] != NULL) {
-            char* env_var = envp[i];
-            printf("%s\n", env_var);
-        }*/
+        if (words[2] == NULL)
+        {
+            if (words[1] != NULL)
+            {
+                if (strcmp(words[1], "PATH") == 0)
+                {
+                    ppath_t path_it = paths->first;
+                    while (path_it != NULL)
+                    {
+                        printf("%s\n", path_it->path_text);
+                        path_it = path_it->next;
+                    }
+                }
+                else
+                {
+                    printf("Print: Invalid argument. Available argument: [], [PATH]\n");
+                }
+            }
+            else
+            {
+                for (int i = 0; envp[i] != NULL; i++)
+                    printf("env[%d]=%s\n", i, envp[i]);
+            }
+        }
+        else
+        {
+            printf("Print: Invalid argument. Available argument: [], [PATH]\n");
+        }
+
+        printf("\n");
+    }
+    else if (strcmp(words[0], "set") == 0)
+    {
+        if (words[3] == NULL)
+        {
+            if (strcmp(words[1], "PATH") == 0)
+            {
+                printf("%s\n", words[2]);
+            }
+        }
+    }
+    else if (strcmp(words[0], "exit") == 0)
+    {
+        fb = EXIT_SIG;
     }
     else
     {
         char *binPath = getBinPath(words[0], paths);
 
         if (binPath != NULL)
-            execProcess(binPath, words, envp);
+        {
+            int binState = BIN_FOREGROUND;
+
+            for (int i = 0; words[i] != NULL; i++)
+            {
+                if (strcmp(words[i], "&") == 0)
+                    binState = BIN_BACKGROUND;
+            }
+            printf("BIN STATE : %i\n", binState);
+            execProcess(binPath, binState, words, envp);
+        }
         else
             printf("\nCommand '%s' not found.\n\nTry: sudo apt install <deb name>\n\n", words[0]);
+
+        free(binPath);
     }
 
     free(words);
 
-    return 0;
+    return fb;
 }
 
-int execProcess(char *path, char **argv, char **envp)
+// TODO: & -> background is broken
+int execProcess(char *path, int state, char **argv, char **envp)
 {
     int status;
     int c_pid = fork();
     int wait_res;
+
     switch (c_pid)
     {
     case -1:
@@ -184,17 +256,23 @@ int execProcess(char *path, char **argv, char **envp)
     case 0:
         if (DEBUG)
             printf("Who is my father?\n");
+
         execve(path, argv, envp);
         break;
     default:
         if (DEBUG)
             printf("Is that you %d? Your father's right here kiddo!\n", c_pid);
-        wait_res = wait(&status);
-        if (wait_res > 0)
+
+        if (state == BIN_FOREGROUND)
         {
-            if (DEBUG)
-                printf("My child %d has served his country well\n", wait_res);
+            wait_res = wait(&status);
+            if (wait_res > 0)
+            {
+                if (DEBUG)
+                    printf("My child %d has served his country well\n", wait_res);
+            }
         }
+
         break;
     }
     return 0;
@@ -214,16 +292,16 @@ int isCommand(char **cmd_obj, char *name, int min_args, int max_args)
     return 1;
 }
 
-char *getPwd()
+inline char *getPwd()
 {
-    char cwd[1024];
+    char cwd[MAX_PATH_LEN];
     return getcwd(cwd, sizeof(cwd));
 }
 
 // TODO: Last path is broken
 char *getBinPath(char *filename, ppaths_t paths)
 {
-    char *binaryPath = malloc(1024 * sizeof(char));
+    char *binaryPath = malloc(MAX_PATH_LEN * sizeof(char));
     ppath_t path_it = paths->first;
 
     while (path_it != NULL)
@@ -241,11 +319,10 @@ char *getBinPath(char *filename, ppaths_t paths)
         }
         path_it = path_it->next;
     }
-
     return NULL;
 }
 
-int fileExists(char *filename)
+inline int fileExists(char *filename)
 {
     return (access(filename, F_OK) != -1);
 }

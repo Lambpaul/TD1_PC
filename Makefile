@@ -16,4 +16,4 @@ quysh: readline.o quysh.o
 	gcc -o quysh readline.o quysh.o
 
 clean:
-	rm -f *.o *~ 
+	rm -f *.o *~ quysh
