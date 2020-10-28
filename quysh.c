@@ -1,16 +1,16 @@
 /*
     This program is a custom shell named QuYsh.
     Its name originates from the "Quiche" which is a famous french dish and the "sh" from bash.
-    As for the origin of the 'Y' linking the two words, it must remains a secret :x
+    As for the origin of the 'Y' linking the two words, it must remain a secret :x
 
     @ Authors:
         Corentin HUMBERT
         Paul LAMBERT
     
     @ Last Modification:
-        24-07-2020 (DMY Formats)
+        28-10-2020 (DMY Formats)
  
-    @ Version: 0.4
+    @ Version: 0.5
 */
 
 #include <stdio.h>
@@ -106,6 +106,7 @@ int main(int argc, char **argv, char **envp)
     // setvbuf(stdout, NULL, _IONBF, 0);
     // setbuf(stdout, NULL);
 
+    // Shell Loop
     for (;;)
     {
         printShellPrefix();
@@ -119,9 +120,9 @@ int main(int argc, char **argv, char **envp)
         free(line);
     }
 
+    // Frees the allocated memory
     path_it = paths->first;
     ppath_t prev_pt;
-
     while (path_it != NULL)
     {
         free(path_it->path_text);
@@ -173,41 +174,33 @@ int processCommand(char *line, ppaths_t paths, char **envp)
         {
             if (words[1] != NULL)
             {
-                if (strcmp(words[1], "PATH") == 0)
-                {
-                    ppath_t path_it = paths->first;
-                    while (path_it != NULL)
-                    {
-                        printf("%s\n", path_it->path_text);
-                        path_it = path_it->next;
-                    }
-                }
+                char *var = getenv(words[1]);
+
+                if (var == NULL)
+                    printf("\n");
                 else
-                {
-                    printf("Print: Invalid argument. Available argument: [], [PATH]\n");
-                }
+                    printf("%s\n", getenv(words[1]));
             }
             else
             {
-                for (int i = 0; envp[i] != NULL; i++)
-                    printf("env[%d]=%s\n", i, envp[i]);
+                for (int i = 0; __environ[i] != NULL; i++)
+                    printf("%s\n", __environ[i]);
             }
         }
         else
         {
-            printf("Print: Invalid argument. Available argument: [], [PATH]\n");
+            printf("quysh: print: too many arguments\n");
         }
-
-        printf("\n");
     }
     else if (strcmp(words[0], "set") == 0)
     {
         if (words[3] == NULL)
         {
-            if (strcmp(words[1], "PATH") == 0)
-            {
-                printf("%s\n", words[2]);
-            }
+            setenv(words[1], words[2], 1);
+        }
+        else
+        {
+            printf("quysh: set: too many arguments\n");
         }
     }
     else if (strcmp(words[0], "exit") == 0)
@@ -228,7 +221,7 @@ int processCommand(char *line, ppaths_t paths, char **envp)
                     binState = BIN_BACKGROUND;
             }
             printf("BIN STATE : %i\n", binState);
-            execProcess(binPath, binState, words, envp);
+            execProcess(binPath, binState, words, __environ); // subtitutes to envp
         }
         else
             printf("\nCommand '%s' not found.\n\nTry: sudo apt install <deb name>\n\n", words[0]);
@@ -271,6 +264,9 @@ int execProcess(char *path, int state, char **argv, char **envp)
                 if (DEBUG)
                     printf("My child %d has served his country well\n", wait_res);
             }
+        } else {
+            wait_res = waitpid(-1, &status, WNOHANG);
+            printf("[1] %d\n", c_pid);
         }
 
         break;
