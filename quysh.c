@@ -44,7 +44,7 @@ typedef struct paths
     ppath_t first;
 } paths_t, *ppaths_t;
 
-int processCommand(char *line, ppaths_t paths);
+int processCommand(char **cmd, ppaths_t paths);
 int execBinary(char *path, int argc, char **argv, char **envp, int state);
 char *getPwd();
 char *getBinPath(char *filename, ppaths_t paths);
@@ -128,7 +128,7 @@ int main(int argc, char **argv, char **envp)
         fflush(stdout);
         char *line = readline();
 
-        int fb = processCommand(line, paths);
+        int fb = processCommand(split_in_words(line), paths);
 
         if (fb == EXIT_SIG)
             break;
@@ -175,9 +175,9 @@ int main(int argc, char **argv, char **envp)
  *  Returns: 0 if the command was processed correctly
  *           EXIT_SIG if the user wants to exit the Shell 
  */
-int processCommand(char *line, ppaths_t paths)
+int processCommand(char **cmd, ppaths_t paths)
 {
-    char **words = split_in_words(line);
+    char **words = cmd;
     int fb = 0;
     int argCount;
 
@@ -187,7 +187,7 @@ int processCommand(char *line, ppaths_t paths)
 
     if (DEBUG)
     {
-        printf("Command: %s [%d arg(s) provided]\n", line, argCount);
+        printf("Command: %s [%d arg(s) provided]\n", words[0], argCount);
         for (int i = 0; i < argCount; i++)
             printf("\targ[%d]='%s'\n", i, words[i]);
         printf("\n");
@@ -208,10 +208,6 @@ int processCommand(char *line, ppaths_t paths)
             {
                 printf("quysh: cd: too many arguments\n");
             }
-        }
-        else if (strcmp(words[0], "pwd") == 0)
-        {
-            printf("%s\n", getPwd());
         }
         else if (strcmp(words[0], "print") == 0)
         {
@@ -258,79 +254,67 @@ int processCommand(char *line, ppaths_t paths)
         }
         else
         {
-            char *binPath;
+            char *binPath = getBinPath(words[0], paths);
             int binState = BIN_FG;
-            char **binArgs = malloc(argCount * sizeof(char *));
+            int subArgC = 0;
 
-            int j = 0;
-            int newCmd = 1;
-
-            for (int i = 0; words[i] != NULL; i++, j++)
+            for (subArgC = 0; subArgC < argCount; subArgC++)
             {
-                if (newCmd)
+                if (strcmp(words[subArgC], "&") == 0)
                 {
-                    if (words[i][0] == '&')
-                    {
-                        newCmd = -1;
-                        break;
-                    }
-                    binPath = getBinPath(words[i], paths);
-
-                    binState = BIN_FG;
-                    j = 0;
-                    newCmd = 0;
+                    binState = BIN_BG;
+                    
+                    execBinary(binPath, subArgC, words, __environ, binState);
+                    if (subArgC + 1 < argCount)
+                        processCommand(&(words[subArgC + 1]), paths);
+                    break;
                 }
+            }
 
+            if (binState == BIN_FG)
+                execBinary(binPath, subArgC, words, __environ, binState);
+
+            free(binPath);
+
+            /*
+
+            for (int i = 0; words[i] != NULL; i++, argc++)
+            {
                 if (strcmp(words[i], "&") == 0)
                 {
                     binState = BIN_BG;
 
                     if (binPath != NULL)
                     {
-                        execBinary(binPath, j, binArgs, __environ, binState); // subtitutes to envp
+                        argc = i;
+                        execBinary(binPath, argc, words, __environ, binState); // subtitutes to envp
+                        printf("args: %d\n", argc);
+                        int charz = 0;
+
+                        argc -= i;
+
+                        if (i + 1 < argCount) {
+                            processCommand(words[i + 1], paths);
+                            break;
+                        }
                     }
                     else
-                        printf("%s: command not found\n", binArgs[0]);
+                        printf("%s: command not found\n", words[0]);
+                }
+            }
 
-                    newCmd = 1;
+            if (binState == BIN_FG)
+            {
+                if (binPath != NULL)
+                {
+                    execBinary(binPath, argc, words, __environ, binState);
+                    printf("args: %d\n", argc);
                 }
                 else
-                {
-                    binArgs[j] = words[i];
-                }
-            }
-
-            switch (newCmd)
-            {
-            case -1:
-                printf("%s: syntax error near unexpected token `&'\n", SHELL_NAME);
-                break;
-            case 0:
-                if (binPath != NULL) {
-                    execBinary(binPath, j, binArgs, __environ, binState); // subtitutes to envp
-                } else {
-                    printf("%s: command not found\n", binArgs[0]);
-                }
-                free(binPath);
-                break;
-            case 1:
-                if (binPath == NULL) {
-                    printf("%s: command not found\n", binArgs[0]);
-                }
-                free(binPath);
-                break;
-            default:
-                printf("newCmd error\n");
-                exit(-1);
-                free(binPath);
-                break;
-            }
-
-            free(binArgs);
+                    printf("%s: command not found\n", words[0]);
+            }*/
         }
     }
-
-    free(words);
 
     return fb;
 }
@@ -374,7 +358,7 @@ int execBinary(char *path, int argc, char **argv, char **envp, int state)
         break;
     default: // The current process is the parent
         if (DEBUG)
-            printf("Is that you %d? Your father's right here kiddo!\n", c_pid);
+            printf("Is that you [%s] %d? Your father's right here kiddo!\n", path, c_pid);
 
         // If the child process has been executed normally, waits for it to terminate
         if (state == BIN_FG)
