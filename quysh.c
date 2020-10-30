@@ -10,7 +10,7 @@
     @ Last Modification:
         30-10-2020 (DMY Formats)
  
-    @ Version: 0.77 (Sexy Version)
+    @ Version: 0.77b (Sexy Version)
 */
 
 #include <stdio.h>
@@ -30,7 +30,7 @@
 #define SHELL_NAME "quysh"
 #define ENABLE_COLORS 1
 #define HIDE_CWD 0
-#define DEBUG 1
+#define DEBUG 0
 
 typedef struct path
 {
@@ -53,6 +53,9 @@ int printShellPrefix();
 
 int main(int argc, char **argv, char **envp)
 {
+    if (DEBUG)
+        printf("--< DEBUG mode is activated >--\n\n");
+
     const char *PATH_RAW = getenv("PATH");     // ??
     const int PATH_RAW_LEN = strlen(PATH_RAW); // O(n)
     const char PATH_DELIM[2] = ":";
@@ -160,6 +163,7 @@ int main(int argc, char **argv, char **envp)
     return 0;
 }
 
+// TODO: Call processCommand recursively on &
 /*
  * Function: processCommand
  * --------------------
@@ -265,15 +269,16 @@ int processCommand(char *line, ppaths_t paths)
             {
                 if (newCmd)
                 {
+                    if (words[i][0] == '&')
+                    {
+                        newCmd = -1;
+                        break;
+                    }
                     binPath = getBinPath(words[i], paths);
+
                     binState = BIN_FG;
                     j = 0;
                     newCmd = 0;
-
-                    for (int k = 0; k < argCount; k++)
-                    {
-                        binArgs[k] = NULL;
-                    }
                 }
 
                 if (strcmp(words[i], "&") == 0)
@@ -295,18 +300,33 @@ int processCommand(char *line, ppaths_t paths)
                 }
             }
 
-            if (binPath != NULL)
+            switch (newCmd)
             {
-                if (!newCmd)
-                {
+            case -1:
+                printf("%s: syntax error near unexpected token `&'\n", SHELL_NAME);
+                break;
+            case 0:
+                if (binPath != NULL) {
                     execBinary(binPath, j, binArgs, __environ, binState); // subtitutes to envp
+                } else {
+                    printf("%s: command not found\n", binArgs[0]);
                 }
+                free(binPath);
+                break;
+            case 1:
+                if (binPath == NULL) {
+                    printf("%s: command not found\n", binArgs[0]);
+                }
+                free(binPath);
+                break;
+            default:
+                printf("newCmd error\n");
+                exit(-1);
+                free(binPath);
+                break;
             }
-            else
-                printf("%s: command not found\n", binArgs[0]);
 
             free(binArgs);
-            free(binPath);
         }
     }
 
