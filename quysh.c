@@ -10,7 +10,7 @@
     @ Last Modification:
         30-10-2020 (DMY Formats)
  
-    @ Version: 0.77b (Sexy Version)
+    @ Version: 0.77c (Sexy Version)
 */
 
 #include <stdio.h>
@@ -21,13 +21,17 @@
 #include <sys/wait.h>
 #include "readline.h"
 
+#define SHELL_NAME "quysh"
+
 #define BIN_FG 0
 #define BIN_BG 1
 
 #define MAX_PATH_LEN 4096
+
+#define OK_SIG 0
+#define ERROR_SIG -1
 #define EXIT_SIG 42
 
-#define SHELL_NAME "quysh"
 #define ENABLE_COLORS 1
 #define HIDE_CWD 0
 #define DEBUG 0
@@ -163,7 +167,6 @@ int main(int argc, char **argv, char **envp)
     return 0;
 }
 
-// TODO: Call processCommand recursively on &
 /*
  * Function: processCommand
  * --------------------
@@ -177,39 +180,44 @@ int main(int argc, char **argv, char **envp)
  */
 int processCommand(char **cmd, ppaths_t paths)
 {
-    char **words = cmd;
-    int fb = 0;
+    int fb = OK_SIG;
     int argCount;
 
     // Counts command arguments (command name included)
-    for (argCount = 0; words[argCount] != NULL; argCount++)
+    for (argCount = 0; cmd[argCount] != NULL; argCount++)
         ;
 
     if (DEBUG)
     {
-        printf("Command: %s [%d arg(s) provided]\n", words[0], argCount);
+        printf("Command: %s [%d arg(s) provided]\n", cmd[0], argCount);
         for (int i = 0; i < argCount; i++)
-            printf("\targ[%d]='%s'\n", i, words[i]);
+            printf("\targ[%d]='%s'\n", i, cmd[i]);
         printf("\n");
     }
 
     if (argCount >= 1)
     {
-        if (strcmp(words[0], "cd") == 0)
+        if (cmd[0][0] == '&')
+        {
+            printf("%s: syntax error near unexpected token `%s'\n", SHELL_NAME, cmd[0]);
+            fb = ERROR_SIG;
+        }
+        else if (strcmp(cmd[0], "cd") == 0)
         {
             if (argCount <= 2)
             {
-                if (chdir(words[1]) == -1)
+                if (chdir(cmd[1]) == -1)
                 {
-                    printf("quysh: cd: No such file or directory\n");
+                    printf("%s: cd: No such file or directory\n", SHELL_NAME);
                 }
             }
             else
             {
-                printf("quysh: cd: too many arguments\n");
+                printf("%s: cd: too many arguments\n", SHELL_NAME);
+                fb = ERROR_SIG;
             }
         }
-        else if (strcmp(words[0], "print") == 0)
+        else if (strcmp(cmd[0], "print") == 0)
         {
             if (argCount <= 2)
             {
@@ -220,99 +228,71 @@ int processCommand(char **cmd, ppaths_t paths)
                 }
                 else
                 {
-                    char *var = getenv(words[1]);
+                    char *var = getenv(cmd[1]);
 
                     if (var == NULL)
                         printf("\n");
                     else
-                        printf("%s\n", getenv(words[1]));
+                        printf("%s\n", getenv(cmd[1]));
                 }
             }
             else
             {
-                printf("quysh: print: too many arguments\n");
+                printf("%s: print: too many arguments\n", SHELL_NAME);
+                fb = -1;
             }
         }
-        else if (strcmp(words[0], "set") == 0)
+        else if (strcmp(cmd[0], "set") == 0)
         {
             if (argCount == 3)
             {
-                setenv(words[1], words[2], 1);
+                setenv(cmd[1], cmd[2], 1);
             }
             else if (argCount < 3)
             {
-                printf("quysh: set: not enough arguments\n");
+                printf("%s: set: not enough arguments\n", SHELL_NAME);
+                fb = ERROR_SIG;
             }
             else
             {
-                printf("quysh: set: too many arguments\n");
+                printf("%s: set: too many arguments\n", SHELL_NAME);
+                fb = ERROR_SIG;
             }
         }
-        else if (strcmp(words[0], "exit") == 0)
+        else if (strcmp(cmd[0], "exit") == 0)
         {
             fb = EXIT_SIG;
         }
         else
         {
-            char *binPath = getBinPath(words[0], paths);
+            char *binPath = getBinPath(cmd[0], paths);
             int binState = BIN_FG;
             int subArgC = 0;
 
-            for (subArgC = 0; subArgC < argCount; subArgC++)
+            if (binPath == NULL)
             {
-                if (strcmp(words[subArgC], "&") == 0)
-                {
-                    binState = BIN_BG;
-                    
-                    execBinary(binPath, subArgC, words, __environ, binState);
-                    if (subArgC + 1 < argCount)
-                        processCommand(&(words[subArgC + 1]), paths);
-                    break;
-                }
+                printf("%s: command not found\n", cmd[0]);
             }
+            else
+            {
+                for (subArgC = 0; subArgC < argCount; subArgC++)
+                {
+                    if (strcmp(cmd[subArgC], "&") == 0)
+                    {
+                        binState = BIN_BG;
 
-            if (binState == BIN_FG)
-                execBinary(binPath, subArgC, words, __environ, binState);
+                        execBinary(binPath, subArgC, cmd, __environ, binState);
+                        if (subArgC + 1 < argCount)
+                            processCommand(&(cmd[subArgC + 1]), paths);
+                        break;
+                    }
+                }
+
+                if (binState == BIN_FG)
+                    execBinary(binPath, subArgC, cmd, __environ, binState);
+            }
 
             free(binPath);
-
-            /*
-
-            for (int i = 0; words[i] != NULL; i++, argc++)
-            {
-                if (strcmp(words[i], "&") == 0)
-                {
-                    binState = BIN_BG;
-
-                    if (binPath != NULL)
-                    {
-                        argc = i;
-                        execBinary(binPath, argc, words, __environ, binState); // subtitutes to envp
-                        printf("args: %d\n", argc);
-                        int charz = 0;
-
-                        argc -= i;
-
-                        if (i + 1 < argCount) {
-                            processCommand(words[i + 1], paths);
-                            break;
-                        }
-                    }
-                    else
-                        printf("%s: command not found\n", words[0]);
-                }
-            }
-
-            if (binState == BIN_FG)
-            {
-                if (binPath != NULL)
-                {
-                    execBinary(binPath, argc, words, __environ, binState);
-                    printf("args: %d\n", argc);
-                }
-                else
-                    printf("%s: command not found\n", words[0]);
-            }*/
         }
     }
 
@@ -455,13 +435,31 @@ inline int fileExists(char *filename)
  */
 int printShellPrefix()
 {
-    char *user = "root";  // Mock value
+    char username[32];
     char *cwd = getPwd(); // The current working directory
+
+    strcpy(username, getenv("USER"));
+
+    int cwdLen = strlen(cwd);
+    int usernameLen = strlen(username);
+
+    // Truncates "/home/user" from displayed cwd in prefix
+    for (int i = 0; i < cwdLen; i++)
+    {
+        if (cwd[i] == '/')
+        {
+            if (strncmp(&(cwd[i + 1]), username, usernameLen) == 0)
+            {
+                cwd = &(cwd[i + 1 + usernameLen]);
+                break;
+            }
+        }
+    }
 
     if (ENABLE_COLORS)
     {
         printf("\033[1;33m");
-        printf("%s@%s", user, SHELL_NAME);
+        printf("%s@%s", username, SHELL_NAME);
         printf("\033[0m");
 
         if (!HIDE_CWD)
@@ -469,17 +467,17 @@ int printShellPrefix()
             printf(":");
 
             printf("\033[1;36m");
-            printf("%s", cwd);
+            printf("~%s", cwd);
             printf("\033[0m");
         }
     }
     else
     {
-        printf("%s@%s", user, SHELL_NAME);
+        printf("%s@%s", username, SHELL_NAME);
 
         if (!HIDE_CWD)
         {
-            printf(":%s", cwd);
+            printf(":~%s", cwd);
         }
     }
 
