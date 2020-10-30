@@ -8,9 +8,9 @@
         Paul LAMBERT
     
     @ Last Modification:
-        28-10-2020 (DMY Formats)
+        30-10-2020 (DMY Formats)
  
-    @ Version: 0.5
+    @ Version: 0.77 (Sexy Version)
 */
 
 #include <stdio.h>
@@ -21,13 +21,16 @@
 #include <sys/wait.h>
 #include "readline.h"
 
+#define BIN_FG 0
+#define BIN_BG 1
+
 #define MAX_PATH_LEN 4096
 #define EXIT_SIG 42
-#define SHELL_NAME "quysh"
-#define DEBUG 0
 
-#define BIN_FOREGROUND 0
-#define BIN_BACKGROUND 1
+#define SHELL_NAME "quysh"
+#define ENABLE_COLORS 1
+#define HIDE_CWD 0
+#define DEBUG 1
 
 typedef struct path
 {
@@ -41,12 +44,12 @@ typedef struct paths
     ppath_t first;
 } paths_t, *ppaths_t;
 
-int processCommand(char *line, ppaths_t paths, char **envp);
-int execProcess(char *path, int state, char **argv, char **envp);
+int processCommand(char *line, ppaths_t paths);
+int execBinary(char *path, int argc, char **argv, char **envp, int state);
 char *getPwd();
-int printShellPrefix();
-int fileExists(char *filename);
 char *getBinPath(char *filename, ppaths_t paths);
+int fileExists(char *filename);
+int printShellPrefix();
 
 int main(int argc, char **argv, char **envp)
 {
@@ -96,24 +99,34 @@ int main(int argc, char **argv, char **envp)
         path_it = path_it->next;
     }
 
-    /*
-    for (int i = 0; envp[i] != NULL; i++)
-        printf("env[%d]=%s\n", i, envp[i]);
-    printf("\n");*/
-
-    // set stdout without buffering so what is printed
-    // is printed immediately on the screen.
-    // setvbuf(stdout, NULL, _IONBF, 0);
-    // setbuf(stdout, NULL);
-
     // Shell Loop
     for (;;)
     {
+        // Looks for terminated children
+        int status;
+        int wait_res = waitpid(-1, &status, WNOHANG);
+
+        if (DEBUG)
+        {
+            if (wait_res != -1)
+            {
+                if (wait_res == 0)
+                {
+                    printf("My heirs are doing me proud.\n");
+                }
+                else
+                {
+                    printf("Ended %d... They will be remembered. [%d]\n", wait_res, status);
+                }
+            }
+        }
+
         printShellPrefix();
         fflush(stdout);
         char *line = readline();
 
-        int fb = processCommand(line, paths, envp);
+        int fb = processCommand(line, paths);
+
         if (fb == EXIT_SIG)
             break;
 
@@ -134,99 +147,167 @@ int main(int argc, char **argv, char **envp)
 
     free(PATH_RAW_CPY);
 
+    /*
+    for (int i = 0; envp[i] != NULL; i++)
+        printf("env[%d]=%s\n", i, envp[i]);
+    printf("\n");*/
+
+    // set stdout without buffering so what is printed
+    // is printed immediately on the screen.
+    //setvbuf(stdout, NULL, _IONBF, 0);
+    //setbuf(stdout, NULL);
+
     return 0;
 }
 
-int processCommand(char *line, ppaths_t paths, char **envp)
+/*
+ * Function: processCommand
+ * --------------------
+ * Evaluates a given command
+ *
+ *  line: The user input
+ *  paths: The structure containing all paths referenced in the PATH environement variable
+ *
+ *  Returns: 0 if the command was processed correctly
+ *           EXIT_SIG if the user wants to exit the Shell 
+ */
+int processCommand(char *line, ppaths_t paths)
 {
     char **words = split_in_words(line);
     int fb = 0;
+    int argCount;
+
+    // Counts command arguments (command name included)
+    for (argCount = 0; words[argCount] != NULL; argCount++)
+        ;
 
     if (DEBUG)
     {
-        printf("%s\n", line);
-        for (int i = 0; words[i] != NULL; i++)
-            printf("[%s], ", words[i]);
+        printf("Command: %s [%d arg(s) provided]\n", line, argCount);
+        for (int i = 0; i < argCount; i++)
+            printf("\targ[%d]='%s'\n", i, words[i]);
         printf("\n");
     }
 
-    if (strcmp(words[0], "cd") == 0)
+    if (argCount >= 1)
     {
-        if (words[2] != NULL)
+        if (strcmp(words[0], "cd") == 0)
         {
-            printf("quysh: cd: too many arguments\n");
-        }
-        else
-        {
-            if (chdir(words[1]) == -1)
+            if (argCount <= 2)
             {
-                printf("quysh: cd: No such file or directory\n");
-            }
-        }
-    }
-    else if (strcmp(words[0], "pwd") == 0)
-    {
-        printf("%s\n", getPwd());
-    }
-    else if (strcmp(words[0], "print") == 0)
-    {
-        if (words[2] == NULL)
-        {
-            if (words[1] != NULL)
-            {
-                char *var = getenv(words[1]);
-
-                if (var == NULL)
-                    printf("\n");
-                else
-                    printf("%s\n", getenv(words[1]));
+                if (chdir(words[1]) == -1)
+                {
+                    printf("quysh: cd: No such file or directory\n");
+                }
             }
             else
             {
-                for (int i = 0; __environ[i] != NULL; i++)
-                    printf("%s\n", __environ[i]);
+                printf("quysh: cd: too many arguments\n");
             }
         }
-        else
+        else if (strcmp(words[0], "pwd") == 0)
         {
-            printf("quysh: print: too many arguments\n");
+            printf("%s\n", getPwd());
         }
-    }
-    else if (strcmp(words[0], "set") == 0)
-    {
-        if (words[3] == NULL)
+        else if (strcmp(words[0], "print") == 0)
         {
-            setenv(words[1], words[2], 1);
-        }
-        else
-        {
-            printf("quysh: set: too many arguments\n");
-        }
-    }
-    else if (strcmp(words[0], "exit") == 0)
-    {
-        fb = EXIT_SIG;
-    }
-    else
-    {
-        char *binPath = getBinPath(words[0], paths);
-
-        if (binPath != NULL)
-        {
-            int binState = BIN_FOREGROUND;
-
-            for (int i = 0; words[i] != NULL; i++)
+            if (argCount <= 2)
             {
-                if (strcmp(words[i], "&") == 0)
-                    binState = BIN_BACKGROUND;
+                if (argCount == 1)
+                {
+                    for (int i = 0; __environ[i] != NULL; i++)
+                        printf("%s\n", __environ[i]);
+                }
+                else
+                {
+                    char *var = getenv(words[1]);
+
+                    if (var == NULL)
+                        printf("\n");
+                    else
+                        printf("%s\n", getenv(words[1]));
+                }
             }
-            printf("BIN STATE : %i\n", binState);
-            execProcess(binPath, binState, words, __environ); // subtitutes to envp
+            else
+            {
+                printf("quysh: print: too many arguments\n");
+            }
+        }
+        else if (strcmp(words[0], "set") == 0)
+        {
+            if (argCount == 3)
+            {
+                setenv(words[1], words[2], 1);
+            }
+            else if (argCount < 3)
+            {
+                printf("quysh: set: not enough arguments\n");
+            }
+            else
+            {
+                printf("quysh: set: too many arguments\n");
+            }
+        }
+        else if (strcmp(words[0], "exit") == 0)
+        {
+            fb = EXIT_SIG;
         }
         else
-            printf("\nCommand '%s' not found.\n\nTry: sudo apt install <deb name>\n\n", words[0]);
+        {
+            char *binPath;
+            int binState = BIN_FG;
+            char **binArgs = malloc(argCount * sizeof(char *));
 
-        free(binPath);
+            int j = 0;
+            int newCmd = 1;
+
+            for (int i = 0; words[i] != NULL; i++, j++)
+            {
+                if (newCmd)
+                {
+                    binPath = getBinPath(words[i], paths);
+                    binState = BIN_FG;
+                    j = 0;
+                    newCmd = 0;
+
+                    for (int k = 0; k < argCount; k++)
+                    {
+                        binArgs[k] = NULL;
+                    }
+                }
+
+                if (strcmp(words[i], "&") == 0)
+                {
+                    binState = BIN_BG;
+
+                    if (binPath != NULL)
+                    {
+                        execBinary(binPath, j, binArgs, __environ, binState); // subtitutes to envp
+                    }
+                    else
+                        printf("%s: command not found\n", binArgs[0]);
+
+                    newCmd = 1;
+                }
+                else
+                {
+                    binArgs[j] = words[i];
+                }
+            }
+
+            if (binPath != NULL)
+            {
+                if (!newCmd)
+                {
+                    execBinary(binPath, j, binArgs, __environ, binState); // subtitutes to envp
+                }
+            }
+            else
+                printf("%s: command not found\n", binArgs[0]);
+
+            free(binArgs);
+            free(binPath);
+        }
     }
 
     free(words);
@@ -234,109 +315,169 @@ int processCommand(char *line, ppaths_t paths, char **envp)
     return fb;
 }
 
-// TODO: & -> background is broken
-int execProcess(char *path, int state, char **argv, char **envp)
+// TODO: Try and find a way to free the child argvCpy
+/*
+ * Function: execBinary
+ * --------------------
+ * Launches a specific binary in a specific state
+ *
+ *  path: The complete path of the binary to be launched
+ *  argc: The number of arguments
+ *  argv: An array containing all the arguments
+ *  envp: An array containing the environment variables
+ *  state: The state in which the binary has to be launched (BIN_FG to launch normally or BIN_BG to launch it in the background)
+ *
+ *  Returns: 0 if all went well
+ */
+int execBinary(char *path, int argc, char **argv, char **envp, int state)
 {
-    int status;
-    int c_pid = fork();
-    int wait_res;
+    int status, wait_res;
+    char **argvCpy;
+    int c_pid = fork(); // Creates a child process
 
+    // Identifies who is the current process and performs specific tasks accordingly
     switch (c_pid)
     {
-    case -1:
-        printf("FATAL!\n");
-        break;
-    case 0:
-        if (DEBUG)
-            printf("Who is my father?\n");
+    case -1: // An error occured
+        perror("fork: ");
+        exit(-1);
+    case 0: // The current process is a child
+        // Makes a copy of argv
+        argvCpy = malloc(argc * sizeof(char **));
+        for (int i = 0; i < argc; i++)
+        {
+            argvCpy[i] = malloc(sizeof(char *));
+            strcpy(argvCpy[i], argv[i]);
+        }
 
-        execve(path, argv, envp);
+        execve(path, argvCpy, envp);
         break;
-    default:
+    default: // The current process is the parent
         if (DEBUG)
             printf("Is that you %d? Your father's right here kiddo!\n", c_pid);
 
-        if (state == BIN_FOREGROUND)
+        // If the child process has been executed normally, waits for it to terminate
+        if (state == BIN_FG)
         {
-            wait_res = wait(&status);
-            if (wait_res > 0)
+            wait_res = waitpid(c_pid, &status, 0);
+            if (wait_res != -1)
             {
                 if (DEBUG)
-                    printf("My child %d has served his country well\n", wait_res);
+                    printf("My child %d has served his country well. [%d]\n", wait_res, status);
             }
-        } else {
-            wait_res = waitpid(-1, &status, WNOHANG);
-            printf("[1] %d\n", c_pid);
+            else
+            {
+                perror("waitpid: ");
+            }
         }
 
         break;
     }
+
     return 0;
 }
 
-int isCommand(char **cmd_obj, char *name, int min_args, int max_args)
-{
-    if (strcmp(cmd_obj[0], name) != 0)
-        return 0;
-
-    if (cmd_obj[min_args] == NULL)
-        return 0;
-
-    if (cmd_obj[max_args + 1] != NULL)
-        return 0;
-
-    return 1;
-}
-
+/*
+ * Function: getPwd
+ * --------------------
+ * Returns a char* corresponding the current working directory
+ *
+ *  Returns: The current working directory
+ */
 inline char *getPwd()
 {
     char cwd[MAX_PATH_LEN];
     return getcwd(cwd, sizeof(cwd));
 }
 
-// TODO: Last path is broken
+/*
+ * Function: getBinPath
+ * --------------------
+ * Looks for the complete file path of a specific binary by going through the list of paths
+ *
+ *  filename: The name of the binary to find
+ *  paths: The structure containing all paths referenced in the PATH environement variable
+ *
+ *  Returns: The complete path of a binary if it exists in one of the directories of paths
+ *           NULL if the binary could not be found
+ */
 char *getBinPath(char *filename, ppaths_t paths)
 {
     char *binaryPath = malloc(MAX_PATH_LEN * sizeof(char));
     ppath_t path_it = paths->first;
 
+    // Iterates over the Linked List of paths
     while (path_it != NULL)
     {
+        // Builds a possible complete path
         strcpy(binaryPath, path_it->path_text);
         strcat(binaryPath, "/");
         strcat(binaryPath, filename);
 
+        // If the binary exists, returns its complete path
         if (fileExists(binaryPath))
         {
             if (DEBUG)
-                printf("Located %s at %s\n", filename, binaryPath);
+                printf("Located '%s' at \"%s\"\n", filename, binaryPath);
 
             return binaryPath;
         }
         path_it = path_it->next;
     }
-    return NULL;
+    return NULL; // The binary has not been found
 }
 
+/*
+ * Function: fileExists
+ * --------------------
+ * Checks whether or not a given file exists in the current working directory
+ *
+ *  filename: The name of the file to check
+ *
+ *  Returns: 0 if the file does not exist
+ *           1 if the file exists
+ */
 inline int fileExists(char *filename)
 {
     return (access(filename, F_OK) != -1);
 }
 
+/*
+ * Function: printShellPrefix
+ * --------------------
+ * Solely used for graphics. Echoes basic information to try and match the look of the prompt of the original Shell
+ *
+ *  Returns: 0 if everything went well
+ */
 int printShellPrefix()
 {
-    char *user = "root";
-    char *cwd = getPwd();
+    char *user = "root";  // Mock value
+    char *cwd = getPwd(); // The current working directory
 
-    printf("\033[1;33m");
-    printf("%s@%s", user, SHELL_NAME);
-    printf("\033[0m");
+    if (ENABLE_COLORS)
+    {
+        printf("\033[1;33m");
+        printf("%s@%s", user, SHELL_NAME);
+        printf("\033[0m");
 
-    printf(":");
+        if (!HIDE_CWD)
+        {
+            printf(":");
 
-    printf("\033[1;36m");
-    printf("%s", cwd);
-    printf("\033[0m");
+            printf("\033[1;36m");
+            printf("%s", cwd);
+            printf("\033[0m");
+        }
+    }
+    else
+    {
+        printf("%s@%s", user, SHELL_NAME);
+
+        if (!HIDE_CWD)
+        {
+            printf(":%s", cwd);
+        }
+    }
 
     printf(" > ");
 
