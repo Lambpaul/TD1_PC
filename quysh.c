@@ -8,9 +8,9 @@
         Paul LAMBERT
     
     @ Last Modification:
-        30-10-2020 (DMY Formats)
+        31-10-2020 (DMY Formats)
  
-    @ Version: 0.77c (Sexy Version)
+    @ Version: 0.8
 */
 
 #include <stdio.h>
@@ -27,6 +27,7 @@
 #define BIN_BG 1
 
 #define MAX_PATH_LEN 4096
+#define MAX_FORK 32
 
 #define OK_SIG 0
 #define ERROR_SIG -1
@@ -40,36 +41,82 @@ typedef struct path
 {
     char *path_text;
     struct path *next;
-} path_t, *ppath_t;
+} path_t, *pPath_t;
 
 typedef struct paths
 {
     int count;
-    ppath_t first;
-} paths_t, *ppaths_t;
+    pPath_t first;
+} paths_t, *pPaths_t;
 
-int processCommand(char **cmd, ppaths_t paths);
-int execBinary(char *path, int argc, char **argv, char **envp, int state);
+/*
+ * Structure: childProgram
+ * -----------------------
+ * Represents a child program running in the background
+ * 
+ *  id:   A serial number corresponding to its date of creation
+ *        The bigger the ID, the younger the child is
+ *  pid:  The PID of the child program
+ *  argc: The number of arguments given to the child program
+ *  argv: An array containing all the arguments given to the child program
+ *  next: A pointer to the next child program
+ *        NULL if the current child program is the youngest
+ */
+typedef struct childProgram
+{
+    int id;
+    int pid;
+    int argc;
+    char **argv;
+    struct childProgram *next;
+} childProgram_t, *pChildProgram_t;
+
+/*
+ * Structure: programDescriptor
+ * --------------------------
+ * Holds information about all children program running in background
+ * 
+ *  children: The number of children currently running in background
+ *  serialID: A global serial number
+ *            The serialID is resetted to 0 whenever all children programs have ended
+ *  first:    A pointer to the first child program
+ *            NULL if there are currently no child program running in background
+ */
+typedef struct programDescriptor
+{
+    int children;
+    int serialID;
+    pChildProgram_t first;
+} progDesc_t, *pProgDesc_t;
+
+int parseCommand(char **cmd, pPaths_t paths, pProgDesc_t proDes);
+int executeCommand(char *path, int argc, char **argv, char **envp, int state, pProgDesc_t proDes);
 char *getPwd();
-char *getBinPath(char *filename, ppaths_t paths);
+char *getBinPath(char *filename, pPaths_t paths);
 int fileExists(char *filename);
 int printShellPrefix();
+
+pProgDesc_t newProgramDescriptor();
+void freeProgramDescriptor(pProgDesc_t proDes);
+pChildProgram_t addProgram(int pid, int argc, char **argv, pProgDesc_t proDes);
+int removeProgram(int id, pProgDesc_t proDes);
+pChildProgram_t findProgram(int pid, pProgDesc_t proDes);
 
 int main(int argc, char **argv, char **envp)
 {
     if (DEBUG)
         printf("--< DEBUG mode is activated >--\n\n");
 
-    const char *PATH_RAW = getenv("PATH");     // ??
-    const int PATH_RAW_LEN = strlen(PATH_RAW); // O(n)
+    const char *PATH_RAW = getenv("PATH");
+    const int PATH_RAW_LEN = strlen(PATH_RAW);
     const char PATH_DELIM[2] = ":";
 
-    char *PATH_RAW_CPY = malloc(PATH_RAW_LEN * sizeof(char));
+    char *PATH_RAW_CPY = (char *)malloc(PATH_RAW_LEN * sizeof(char));
 
     char *str_it;    // An iterator over the RAW_PATH where elements are delimited by the PATH_DELIM character
-    ppath_t path_it; // A path iterator
+    pPath_t path_it; // A path iterator
 
-    ppaths_t paths = malloc(sizeof(paths_t));
+    pPaths_t paths = (pPaths_t)malloc(sizeof(paths_t));
     paths->count = 0;
     paths->first = NULL;
 
@@ -81,11 +128,11 @@ int main(int argc, char **argv, char **envp)
 
     // Splits the RAW_PATH into multiple individual path structures
     str_it = strtok(PATH_RAW_CPY, PATH_DELIM);
-    path_it = malloc(sizeof(path_t));
+    path_it = (pPath_t)malloc(sizeof(path_t));
     while (str_it != NULL)
     {
         // Initializes a path
-        path_it->path_text = malloc(MAX_PATH_LEN * sizeof(char));
+        path_it->path_text = (char *)malloc(MAX_PATH_LEN * sizeof(char));
         path_it->next = NULL;
 
         // References the first path to the paths structure
@@ -102,28 +149,52 @@ int main(int argc, char **argv, char **envp)
         // Continues to the next entry
         str_it = strtok(NULL, PATH_DELIM);
         if (str_it != NULL)
-            path_it->next = malloc(sizeof(path_t));
+            path_it->next = (pPath_t)malloc(sizeof(path_t));
         path_it = path_it->next;
     }
+
+    pProgDesc_t proDes = newProgramDescriptor();
 
     // Shell Loop
     for (;;)
     {
         // Looks for terminated children
         int status;
-        int wait_res = waitpid(-1, &status, WNOHANG);
+        int childPid;
+
+        while ((childPid = waitpid(-1, &status, WNOHANG)) > 0)
+        {
+            pChildProgram_t child = findProgram(childPid, proDes);
+
+            if (child != NULL)
+            {
+                printf("[%d]  Done\t\t", child->id);
+                for (int i = 0; i < child->argc; i++)
+                {
+                    printf("%s ", child->argv[i]);
+                }
+                printf("\n");
+
+                removeProgram(child->id, proDes);
+            }
+            else
+            {
+                printf("Couldn't find %d", childPid);
+                exit(-1);
+            }
+        }
 
         if (DEBUG)
         {
-            if (wait_res != -1)
+            if (childPid != -1)
             {
-                if (wait_res == 0)
+                if (childPid == 0)
                 {
                     printf("My heirs are doing me proud.\n");
                 }
                 else
                 {
-                    printf("Ended %d... They will be remembered. [%d]\n", wait_res, status);
+                    printf("Ended %d... They will be remembered. [%d]\n", childPid, status);
                 }
             }
         }
@@ -132,7 +203,7 @@ int main(int argc, char **argv, char **envp)
         fflush(stdout);
         char *line = readline();
 
-        int fb = processCommand(split_in_words(line), paths);
+        int fb = parseCommand(split_in_words(line), paths, proDes);
 
         if (fb == EXIT_SIG)
             break;
@@ -140,9 +211,11 @@ int main(int argc, char **argv, char **envp)
         free(line);
     }
 
+    freeProgramDescriptor(proDes);
+
     // Frees the allocated memory
     path_it = paths->first;
-    ppath_t prev_pt;
+    pPath_t prev_pt;
     while (path_it != NULL)
     {
         free(path_it->path_text);
@@ -168,17 +241,17 @@ int main(int argc, char **argv, char **envp)
 }
 
 /*
- * Function: processCommand
- * --------------------
+ * Function: parseCommand
+ * ----------------------
  * Evaluates a given command
  *
- *  line: The user input
- *  paths: The structure containing all paths referenced in the PATH environement variable
+ *  line:    The user input
+ *  paths:   The structure containing all paths referenced in the PATH environement variable
  *
  *  Returns: 0 if the command was processed correctly
  *           EXIT_SIG if the user wants to exit the Shell 
  */
-int processCommand(char **cmd, ppaths_t paths)
+int parseCommand(char **cmd, pPaths_t paths, pProgDesc_t proDes)
 {
     int fb = OK_SIG;
     int argCount;
@@ -281,15 +354,15 @@ int processCommand(char **cmd, ppaths_t paths)
                     {
                         binState = BIN_BG;
 
-                        execBinary(binPath, subArgC, cmd, __environ, binState);
+                        executeCommand(binPath, subArgC, cmd, __environ, binState, proDes);
                         if (subArgC + 1 < argCount)
-                            processCommand(&(cmd[subArgC + 1]), paths);
+                            parseCommand(&(cmd[subArgC + 1]), paths, proDes);
                         break;
                     }
                 }
 
                 if (binState == BIN_FG)
-                    execBinary(binPath, subArgC, cmd, __environ, binState);
+                    executeCommand(binPath, subArgC, cmd, __environ, binState, proDes);
             }
 
             free(binPath);
@@ -301,58 +374,67 @@ int processCommand(char **cmd, ppaths_t paths)
 
 // TODO: Try and find a way to free the child argvCpy
 /*
- * Function: execBinary
- * --------------------
+ * Function: executeCommand
+ * ------------------------
  * Launches a specific binary in a specific state
  *
- *  path: The complete path of the binary to be launched
- *  argc: The number of arguments
- *  argv: An array containing all the arguments
- *  envp: An array containing the environment variables
- *  state: The state in which the binary has to be launched (BIN_FG to launch normally or BIN_BG to launch it in the background)
+ *  path:    The complete path of the binary to be launched
+ *  argc:    The number of arguments
+ *  argv:    An array containing all the arguments
+ *  envp:    An array containing the environment variables
+ *  state:   The state in which the binary has to be launched (BIN_FG to launch normally or BIN_BG to launch it in the background)
  *
  *  Returns: 0 if all went well
  */
-int execBinary(char *path, int argc, char **argv, char **envp, int state)
+int executeCommand(char *path, int argc, char **argv, char **envp, int state, pProgDesc_t proDes)
 {
-    int status, wait_res;
+    int status, waitRes;
     char **argvCpy;
-    int c_pid = fork(); // Creates a child process
+    int childPid = fork(); // Creates a child process
 
     // Identifies who is the current process and performs specific tasks accordingly
-    switch (c_pid)
+    switch (childPid)
     {
     case -1: // An error occured
         perror("fork: ");
         exit(-1);
     case 0: // The current process is a child
         // Makes a copy of argv
-        argvCpy = malloc(argc * sizeof(char **));
+        argvCpy = (char **)(malloc((argc + 1) * sizeof(char *)));
         for (int i = 0; i < argc; i++)
         {
-            argvCpy[i] = malloc(sizeof(char *));
+            argvCpy[i] = (char *)malloc(sizeof(char *));
             strcpy(argvCpy[i], argv[i]);
         }
+        argvCpy[argc] = NULL; // Very important!!
 
         execve(path, argvCpy, envp);
+        perror("execve failed");
+        exit(EXIT_FAILURE);
         break;
     default: // The current process is the parent
         if (DEBUG)
-            printf("Is that you [%s] %d? Your father's right here kiddo!\n", path, c_pid);
+            printf("Is that you [%s] %d? Your father's right here kiddo!\n", path, childPid);
 
         // If the child process has been executed normally, waits for it to terminate
         if (state == BIN_FG)
         {
-            wait_res = waitpid(c_pid, &status, 0);
-            if (wait_res != -1)
+            waitRes = waitpid(childPid, &status, 0);
+            if (waitRes != -1)
             {
                 if (DEBUG)
-                    printf("My child %d has served his country well. [%d]\n", wait_res, status);
+                    printf("My child %d has served his country well. [%d]\n", waitRes, status);
             }
             else
             {
                 perror("waitpid: ");
             }
+        }
+        else if (state == BIN_BG)
+        {
+
+            pChildProgram_t child = addProgram(childPid, argc, argv, proDes);
+            printf("[%d] %d\n", child->id, child->pid);
         }
 
         break;
@@ -363,7 +445,7 @@ int execBinary(char *path, int argc, char **argv, char **envp, int state)
 
 /*
  * Function: getPwd
- * --------------------
+ * ----------------
  * Returns a char* corresponding the current working directory
  *
  *  Returns: The current working directory
@@ -380,15 +462,15 @@ inline char *getPwd()
  * Looks for the complete file path of a specific binary by going through the list of paths
  *
  *  filename: The name of the binary to find
- *  paths: The structure containing all paths referenced in the PATH environement variable
+ *  paths:    The structure containing all paths referenced in the PATH environement variable
  *
- *  Returns: The complete path of a binary if it exists in one of the directories of paths
- *           NULL if the binary could not be found
+ *  Returns:  The complete path of a binary if it exists in one of the directories of paths
+ *            NULL if the binary could not be found
  */
-char *getBinPath(char *filename, ppaths_t paths)
+char *getBinPath(char *filename, pPaths_t paths)
 {
-    char *binaryPath = malloc(MAX_PATH_LEN * sizeof(char));
-    ppath_t path_it = paths->first;
+    char *binaryPath = (char *)malloc(MAX_PATH_LEN * sizeof(char));
+    pPath_t path_it = paths->first;
 
     // Iterates over the Linked List of paths
     while (path_it != NULL)
@@ -418,8 +500,8 @@ char *getBinPath(char *filename, ppaths_t paths)
  *
  *  filename: The name of the file to check
  *
- *  Returns: 0 if the file does not exist
- *           1 if the file exists
+ *  Returns:  0 if the file does not exist
+ *            1 if the file exists
  */
 inline int fileExists(char *filename)
 {
@@ -428,7 +510,7 @@ inline int fileExists(char *filename)
 
 /*
  * Function: printShellPrefix
- * --------------------
+ * --------------------------
  * Solely used for graphics. Echoes basic information to try and match the look of the prompt of the original Shell
  *
  *  Returns: 0 if everything went well
@@ -484,4 +566,172 @@ int printShellPrefix()
     printf(" > ");
 
     return 0;
+}
+
+/*
+ * Function: newProgramDescriptor
+ * ------------------------------
+ * Creates a new Program Descriptor
+ *
+ *  Returns: A pointer to the newly allocated Program Descriptor
+ */
+pProgDesc_t newProgramDescriptor()
+{
+    pProgDesc_t proDes = (pProgDesc_t)malloc(sizeof(progDesc_t));
+    proDes->children = 0;
+    proDes->serialID = 0;
+    proDes->first = NULL;
+    return proDes;
+}
+
+/*
+ * Function: freeProgramDescriptor
+ * -------------------------------
+ * Deallocates a Program Descriptor
+ *
+ *  proDes: A pointer to the Program Descriptor
+ */
+void freeProgramDescriptor(pProgDesc_t proDes)
+{
+    pChildProgram_t it = proDes->first;
+    pChildProgram_t prev = NULL;
+
+    while (it != NULL)
+    {
+        for (int i = 0; i < it->argc; i++)
+        {
+            free(it->argv[i]);
+        }
+        free(it->argv);
+        prev = it;
+        it = it->next;
+        free(prev);
+    }
+    free(proDes);
+}
+
+/*
+ * Function: addProgram
+ * --------------------
+ * Adds a specific child program to the list of children running in background
+ * 
+ *  pid:     The PID of the child program
+ *  argc:    The number of arguments given to the child program
+ *  argv:    An array containing all the arguments given to the child program
+ *  proDes:  A pointer to the Program Descriptor
+ *
+ *  Returns: A pointer to the newly allocated Child Program
+ */
+pChildProgram_t addProgram(int pid, int argc, char **argv, pProgDesc_t proDes)
+{
+    pChildProgram_t it = proDes->first;
+    pChildProgram_t prev = NULL;
+
+    while (it != NULL)
+    {
+        prev = it;
+        it = it->next;
+    }
+
+    it = (pChildProgram_t)malloc(sizeof(childProgram_t));
+    it->id = ++proDes->serialID;
+    it->pid = pid;
+    it->next = NULL;
+
+    it->argc = argc;
+    it->argv = malloc(sizeof(char **));
+
+    for (int i = 0; i < argc; i++)
+    {
+        it->argv[i] = malloc(strlen(argv[i]) * sizeof(char));
+        strcpy(it->argv[i], argv[i]);
+    }
+
+    if (prev != NULL)
+        prev->next = it;
+    else
+        proDes->first = it;
+
+    proDes->children++;
+
+    return it;
+}
+
+/*
+ * Function: removeProgram
+ * -----------------------
+ * Removes a specific child program from the list of children running in background
+ * 
+ *  id:      The ID of the child program
+ *  proDes:  A pointer to the Program Descriptor
+ *
+ *  Returns: -1 if an error occured
+ *           0 if the child could not be removed
+ *           1 if the child has been successfully removed
+ */
+int removeProgram(int id, pProgDesc_t proDes)
+{
+    pChildProgram_t it = proDes->first;
+    pChildProgram_t prev = NULL;
+
+    if (proDes->children == 0)
+    {
+        printf("Can't remove program from descriptor since there are no program left\n");
+        return -1;
+    }
+
+    while (it != NULL)
+    {
+        if (it->id == id)
+        {
+            if (prev != NULL)
+                prev->next = it->next;
+            else
+                proDes->first = it->next;
+
+            for (int i = 0; i < it->argc; i++)
+            {
+                free(it->argv[i]);
+            }
+            free(it->argv);
+            free(it);
+
+            proDes->children--;
+
+            if (proDes->children == 0)
+                proDes->serialID = 0;
+
+            return 1;
+        }
+        prev = it;
+        it = it->next;
+    }
+
+    return 0;
+}
+
+/*
+ * Function: findProgram
+ * ---------------------
+ * Searches for a specific child program in the list of children running in background
+ * 
+ *  pid:     The PID of the child program to find
+ *  proDes:  A pointer to the Program Descriptor
+ *
+ *  Returns: A pointer to the child program matching the PID given in argument
+ *           NULL if the child program could not be found
+ */
+pChildProgram_t findProgram(int pid, pProgDesc_t proDes)
+{
+    pChildProgram_t it = proDes->first;
+
+    while (it != NULL)
+    {
+        if (it->pid == pid)
+            return it;
+
+        it = it->next;
+    }
+
+    return NULL;
 }
