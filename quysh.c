@@ -8,9 +8,9 @@
         Paul LAMBERT
     
     @ Last Modification:
-        31-10-2020 (DMY Formats)
+        22-11-2020 (DMY Formats)
  
-    @ Version: 0.8
+    @ Version: 0.9 (Pied Piper Version)
 */
 
 #include <stdio.h>
@@ -23,6 +23,7 @@
 
 #define SHELL_NAME "quysh"
 
+/* Command state constants */
 #define BIN_FG 0
 #define BIN_BG 1
 
@@ -42,6 +43,7 @@
 /* Pipes constants */
 #define READ_END 0
 #define WRITE_END 1
+#define BOTH_END 2
 
 typedef struct path
 {
@@ -95,8 +97,8 @@ typedef struct programDescriptor
     pChildProgram_t first;
 } progDesc_t, *pProgDesc_t;
 
-int parseCommand(char **cmd, pPaths_t paths, pProgDesc_t proDes);
-int executeCommand(char *path, int argc, char **argv, char **envp, int state, pProgDesc_t proDes);
+int parseCommand(char **cmd, pPaths_t paths, int usePipe, int streamPipe[2], pProgDesc_t proDes);
+int executeCommand(char *path, int argc, char **argv, char **envp, int state, int usePipe, int streamPipe[2], int pipeAction, pProgDesc_t proDes);
 char *getPwd();
 char *getBinPath(char *filename, pPaths_t paths);
 int fileExists(char *filename);
@@ -110,6 +112,7 @@ pChildProgram_t findProgram(int pid, pProgDesc_t proDes);
 
 int main(int argc, char **argv, char **envp)
 {
+    int mpipes[2];
     if (DEBUG)
         printf("--< DEBUG mode is activated >--\n\n");
 
@@ -209,7 +212,7 @@ int main(int argc, char **argv, char **envp)
         fflush(stdout);
         char *line = readline();
 
-        int fb = parseCommand(split_in_words(line), paths, proDes);
+        int fb = parseCommand(split_in_words(line), paths, 0, mpipes, proDes);
 
         if (fb == EXIT_SIG)
             break;
@@ -257,7 +260,7 @@ int main(int argc, char **argv, char **envp)
  *  Returns: 0 if the command was processed correctly
  *           EXIT_SIG if the user wants to exit the Shell 
  */
-int parseCommand(char **cmd, pPaths_t paths, pProgDesc_t proDes)
+int parseCommand(char **cmd, pPaths_t paths, int usePipe, int streamPipe[2], pProgDesc_t proDes)
 {
     int fb = OK_SIG;
     int argCount;
@@ -347,6 +350,7 @@ int parseCommand(char **cmd, pPaths_t paths, pProgDesc_t proDes)
             char *binPath = getBinPath(cmd[0], paths);
             int binState = BIN_FG;
             int subArgC = 0;
+            int gozag = 0;
 
             if (binPath == NULL)
             {
@@ -360,15 +364,37 @@ int parseCommand(char **cmd, pPaths_t paths, pProgDesc_t proDes)
                     {
                         binState = BIN_BG;
 
-                        executeCommand(binPath, subArgC, cmd, __environ, binState, proDes);
+                        executeCommand(binPath, subArgC, cmd, __environ, binState, usePipe, streamPipe, READ_END, proDes);
                         if (subArgC + 1 < argCount)
-                            parseCommand(&(cmd[subArgC + 1]), paths, proDes);
+                            parseCommand(&(cmd[subArgC + 1]), paths, 0, streamPipe, proDes);
+                        break;
+                    }
+                    else if (strcmp(cmd[subArgC], "|") == 0)
+                    {
+                        pipe(streamPipe);
+                        gozag = 1;
+
+                        if (usePipe == 1)
+                        {
+                            executeCommand(binPath, subArgC, cmd, __environ, BIN_FG, 1, streamPipe, WRITE_END, proDes);
+                        }
+                        else
+                        {
+                            executeCommand(binPath, subArgC, cmd, __environ, BIN_FG, 1, streamPipe, BOTH_END, proDes);
+                        }
+
+                        if (subArgC + 1 < argCount)
+                        {
+                            parseCommand(&(cmd[subArgC + 1]), paths, 1, streamPipe, proDes);
+                        }
                         break;
                     }
                 }
 
-                if (binState == BIN_FG)
-                    executeCommand(binPath, subArgC, cmd, __environ, binState, proDes);
+                if (binState == BIN_FG && gozag == 0)
+                {
+                    executeCommand(binPath, subArgC, cmd, __environ, binState, 2, streamPipe, READ_END, proDes);
+                }
             }
 
             free(binPath);
@@ -392,7 +418,7 @@ int parseCommand(char **cmd, pPaths_t paths, pProgDesc_t proDes)
  *
  *  Returns: 0 if all went well
  */
-int executeCommand(char *path, int argc, char **argv, char **envp, int state, pProgDesc_t proDes)
+int executeCommand(char *path, int argc, char **argv, char **envp, int state, int usePipe, int streamPipe[2], int pipeAction, pProgDesc_t proDes)
 {
     int status, waitRes;
     char **argvCpy;
@@ -414,17 +440,59 @@ int executeCommand(char *path, int argc, char **argv, char **envp, int state, pP
         }
         argvCpy[argc] = NULL; // Very important!!
 
+        /*printf("Hi, I am %s.\n", path);
+        if (usePipe)
+        {
+            if (pipeAction == WRITE_END)
+                printf("It looks like I am going to redirect my STDOUT somewhere...\n");
+            else if (pipeAction == READ_END)
+                printf("I am waiting for my STDIN to be delivered by one of my siblings...\n");
+        }
+        else
+        {
+            printf("I can manage on my own!\n");
+        }*/
+
+        if (usePipe)
+        {
+            if (pipeAction == READ_END)
+            {
+                dup2(streamPipe[READ_END], STDIN_FILENO);
+                close(streamPipe[WRITE_END]);
+            }
+            else if (pipeAction == WRITE_END)
+            {
+                dup2(streamPipe[WRITE_END], STDOUT_FILENO);
+                close(streamPipe[READ_END]);
+            }
+            else if (pipeAction == BOTH_END)
+            {
+                dup2(streamPipe[WRITE_END], STDOUT_FILENO);
+                dup2(streamPipe[READ_END], STDIN_FILENO);
+            }
+        }
+
         execve(path, argvCpy, envp);
         perror("execve failed");
         exit(EXIT_FAILURE);
         break;
     default: // The current process is the parent
+        if (usePipe == 2)
+        {
+            //close(streamPipe[0]);
+            //close(streamPipe[1]);
+        }
         if (DEBUG)
             printf("Is that you [%s] %d? Your father's right here kiddo!\n", path, childPid);
 
         // If the child process has been executed normally, waits for it to terminate
         if (state == BIN_FG)
         {
+            if (usePipe == 2)
+            {
+                close(streamPipe[0]);
+                close(streamPipe[1]);
+            }
             waitRes = waitpid(childPid, &status, 0);
             if (waitRes != -1)
             {
@@ -438,7 +506,6 @@ int executeCommand(char *path, int argc, char **argv, char **envp, int state, pP
         }
         else if (state == BIN_BG)
         {
-
             pChildProgram_t child = addProgram(childPid, argc, argv, proDes);
             printf("[%d] %d\n", child->id, child->pid);
         }
