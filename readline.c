@@ -81,7 +81,7 @@ char** split_in_words(char *line) {
 			start = cur;
       if (c=='"') {
         c = *++cur;
-        while (c!='"')
+        while (c != 0 && c != '"')
           c = *++cur;
         cur++;
       } else {

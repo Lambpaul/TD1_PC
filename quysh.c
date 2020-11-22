@@ -29,13 +29,19 @@
 #define MAX_PATH_LEN 4096
 #define MAX_FORK 32
 
+/* Shell command feedback constants */
 #define OK_SIG 0
 #define ERROR_SIG -1
 #define EXIT_SIG 42
 
+/* Shell GUI constants [EDITABLE BY USER] */
 #define ENABLE_COLORS 1
 #define HIDE_CWD 0
 #define DEBUG 0
+
+/* Pipes constants */
+#define READ_END 0
+#define WRITE_END 1
 
 typedef struct path
 {
@@ -664,7 +670,7 @@ pChildProgram_t addProgram(int pid, int argc, char **argv, pProgDesc_t proDes)
  * 
  *  id:      The ID of the child program
  *  proDes:  A pointer to the Program Descriptor
- *
+ *MAX_FORK
  *  Returns: -1 if an error occured
  *           0 if the child could not be removed
  *           1 if the child has been successfully removed
