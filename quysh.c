@@ -1,7 +1,7 @@
 /*
     This program is a custom shell named QuYsh.
     Its name originates from the "Quiche" which is a famous french dish and the "sh" from bash.
-    As for the origin of the 'Y' linking the two words, its origin is kept inside of the Pandora's box
+    As for the 'Y' linking the two words, its origin is kept inside of the Pandora's box.
 
     @ Authors:
         Corentin HUMBERT
@@ -10,7 +10,7 @@
     @ Last Modification:
         25-11-2020 (DMY Formats)
  
-    @ Version: 0.97 (Pied Piper Version [ULTRA HYPE MODE])
+    @ Version: 0.97.1 (Pied Piper Version [ULTRA HYPE MODE])
 */
 
 #include <stdio.h>
@@ -381,11 +381,12 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
                     {
                         binState = BIN_BG;
 
-                        if (readFromPipe)
+                        if (readFromPipe) // Prefixed by '|'
                             pipeState = PIP_READ;
                         else
                             pipeState = PIP_NONE;
 
+                        // Swaps the pipes as explained further below
                         if (pipeCount % 2 == 0)
                             executeCommand(binPath, subArgC, cmd, __environ, binState, pipeState, pipeB, pipeA, proDes);
                         else
@@ -403,14 +404,17 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
                         // TODO: Test if last command is of the form: cmd |
                         // This could prove troublesome since no command is placed after
                         // Try in Linux Shell to get ideas
+                        // NB: I tried it and it does not seem to break anything but make sure to test things anyway
 
                         /* 
                          * In order to allow for a command to receive its input from its predecessor and send its output to its successor, it is required
-                         * to use another pipe. So, each command will use two pipes: one for its input and the other for its output.
+                         * to use another pipe. So, each command will use two pipes: one for its input and the other for its output. Please refer to the
+                         * following scenario to understand better:
+                         * 
                          * > ls -al | grep read | grep readline.c
                          * 
                          * ls -al:
-                         *      in: pipeB
+                         *      in: pipeB (unushed) -> uses STDIN instead
                          *      out: pipeA
                          * 
                          * grep read
@@ -419,25 +423,26 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
                          * 
                          * grep readline.c
                          *      in: pipeB
-                         *      out: pipeA
+                         *      out: pipeA (unused) -> uses STDOUT instead
+                         * 
+                         * While two pipes are enough for it to work, we need to make sure that the in and out pipes are swapped for each command. This is the purpose
+                         * of pipeCount. If it is odd, then the case will be the same as "ls -al" or "grep readline.c" in the scenario above. If it is even, the case
+                         * will be the same as "grep read".
                          */
                         if (pipeCount % 2 == 0)
                             pipe(pipeA);
                         else
                             pipe(pipeB);
 
-                        if (readFromPipe)
+                        if (readFromPipe) // Prefixed by '|'
                             pipeState = PIP_BOTH;
                         else
                             pipeState = PIP_WRITE;
 
-                        // The command was piped
                         if (pipeCount % 2 == 0)
                             executeCommand(binPath, subArgC, cmd, __environ, BIN_FG, pipeState, pipeB, pipeA, proDes);
                         else
-                        {
                             executeCommand(binPath, subArgC, cmd, __environ, BIN_FG, pipeState, pipeA, pipeB, proDes);
-                        }
 
                         if (subArgC + 1 < argCount)
                         {
@@ -450,22 +455,14 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
                 if (binState == BIN_FG && !piping)
                 {
                     if (readFromPipe)
-                    {
                         pipeState = PIP_READ;
-                    }
                     else
-                    {
                         pipeState = PIP_NONE;
-                    }
 
                     if (pipeCount % 2 == 0)
-                    {
                         executeCommand(binPath, subArgC, cmd, __environ, binState, pipeState, pipeB, pipeA, proDes);
-                    }
                     else
-                    {
                         executeCommand(binPath, subArgC, cmd, __environ, binState, pipeState, pipeA, pipeB, proDes);
-                    }
                 }
             }
 
@@ -482,11 +479,14 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
  * ------------------------
  * Launches a specific binary in a specific state
  *
- *  path:    The complete path of the binary to be launched
- *  argc:    The number of arguments
- *  argv:    An array containing all the arguments
- *  envp:    An array containing the environment variables
- *  state:   The state in which the binary has to be launched (BIN_FG to launch normally or BIN_BG to launch it in the background)
+ *  path:       The complete path of the binary to be launched
+ *  argc:       The number of arguments
+ *  argv:       An array containing all the arguments
+ *  envp:       An array containing the environment variables
+ *  state:      The state in which the binary has to be launched (BIN_FG to launch normally or BIN_BG to launch it in the background)
+ *  pipeState:  Determines the IO actions of the command (Refer to the enumerations at the top of this file for further information)
+ *  getPipe:    The pipe from which the command will potentially read (getPipe > STDIN)
+ *  givePipe:   The pipe to which the command will eventually write (STDOUT > givePipe)
  *
  *  Returns: 0 if all went well
  */
@@ -525,6 +525,7 @@ int executeCommand(char *path, int argc, char **argv, char **envp, int state, in
             printf("I can manage on my own!\n");
         }*/
 
+        // TODO: These switches are a mess. Please find the resolve to make them organized, handsome and commented as well.
         switch (pipeState)
         {
         case PIP_NONE:
@@ -851,7 +852,7 @@ pChildProgram_t addProgram(int pid, int argc, char **argv, pProgDesc_t proDes)
  * 
  *  id:      The ID of the child program
  *  proDes:  A pointer to the Program Descriptor
- *MAX_FORK
+ *
  *  Returns: -1 if an error occured
  *           0 if the child could not be removed
  *           1 if the child has been successfully removed
