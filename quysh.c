@@ -1,16 +1,16 @@
 /*
     This program is a custom shell named QuYsh.
     Its name originates from the "Quiche" which is a famous french dish and the "sh" from bash.
-    As for the origin of the 'Y' linking the two words, it must remain a secret :x
+    As for the origin of the 'Y' linking the two words, its origin is kept inside of the Pandora's box
 
     @ Authors:
         Corentin HUMBERT
         Paul LAMBERT
     
     @ Last Modification:
-        22-11-2020 (DMY Formats)
+        25-11-2020 (DMY Formats)
  
-    @ Version: 0.9 (Pied Piper Version)
+    @ Version: 0.97 (Pied Piper Version [ULTRA HYPE MODE])
 */
 
 #include <stdio.h>
@@ -23,27 +23,36 @@
 
 #define SHELL_NAME "quysh"
 
-/* Command state constants */
-#define BIN_FG 0
-#define BIN_BG 1
+/* Process state */
+#define BIN_FG 0 // Runs in foreground
+#define BIN_BG 1 // Runs in background
 
+/* Process in/out mode */
+#define PIP_NONE 0  // Current process does not use any pipe
+#define PIP_WRITE 1 // Current process uses a pipe to pass its STDOUT to the next process
+#define PIP_READ 2  // Current process used a pipe to get its STDIN from the previous process
+#define PIP_BOTH 3  // Current process is both reading and writing from external processes
+
+/* Pipe ends */
+#define READ_END 0
+#define WRITE_END 1
+
+int pipeA[2] = {-1, -1};
+int pipeB[2] = {-1, -1};
+
+/* Shell basic constants */
 #define MAX_PATH_LEN 4096
-#define MAX_FORK 32
+#define MAX_FORK 32 // TODO: UNUSED
 
 /* Shell command feedback constants */
-#define OK_SIG 0
 #define ERROR_SIG -1
+#define OK_SIG 0
 #define EXIT_SIG 42
 
 /* Shell GUI constants [EDITABLE BY USER] */
 #define ENABLE_COLORS 1
 #define HIDE_CWD 0
 #define DEBUG 0
-
-/* Pipes constants */
-#define READ_END 0
-#define WRITE_END 1
-#define BOTH_END 2
 
 typedef struct path
 {
@@ -97,8 +106,8 @@ typedef struct programDescriptor
     pChildProgram_t first;
 } progDesc_t, *pProgDesc_t;
 
-int parseCommand(char **cmd, pPaths_t paths, int usePipe, int streamPipe[2], pProgDesc_t proDes);
-int executeCommand(char *path, int argc, char **argv, char **envp, int state, int usePipe, int streamPipe[2], int pipeAction, pProgDesc_t proDes);
+int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pProgDesc_t proDes);
+int executeCommand(char *path, int argc, char **argv, char **envp, int state, int pipeState, int getPipe[2], int givePipe[2], pProgDesc_t proDes);
 char *getPwd();
 char *getBinPath(char *filename, pPaths_t paths);
 int fileExists(char *filename);
@@ -112,7 +121,6 @@ pChildProgram_t findProgram(int pid, pProgDesc_t proDes);
 
 int main(int argc, char **argv, char **envp)
 {
-    int mpipes[2];
     if (DEBUG)
         printf("--< DEBUG mode is activated >--\n\n");
 
@@ -212,7 +220,7 @@ int main(int argc, char **argv, char **envp)
         fflush(stdout);
         char *line = readline();
 
-        int fb = parseCommand(split_in_words(line), paths, 0, mpipes, proDes);
+        int fb = parseCommand(split_in_words(line), paths, 0, 0, proDes); // There is no pipe at the start
 
         if (fb == EXIT_SIG)
             break;
@@ -254,13 +262,16 @@ int main(int argc, char **argv, char **envp)
  * ----------------------
  * Evaluates a given command
  *
- *  line:    The user input
- *  paths:   The structure containing all paths referenced in the PATH environement variable
+ *  line:           The user input
+ *  paths:          The structure containing all paths referenced in the PATH environement variable
+ *  readFromPipe:   1 if the given command was prefixed by a '|'
+ *                  0 otherwise
+ *  pipeCount:      The number of pipes preceeding the given command
  *
  *  Returns: 0 if the command was processed correctly
  *           EXIT_SIG if the user wants to exit the Shell 
  */
-int parseCommand(char **cmd, pPaths_t paths, int usePipe, int streamPipe[2], pProgDesc_t proDes)
+int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pProgDesc_t proDes)
 {
     int fb = OK_SIG;
     int argCount;
@@ -280,6 +291,11 @@ int parseCommand(char **cmd, pPaths_t paths, int usePipe, int streamPipe[2], pPr
     if (argCount >= 1)
     {
         if (cmd[0][0] == '&')
+        {
+            printf("%s: syntax error near unexpected token `%s'\n", SHELL_NAME, cmd[0]);
+            fb = ERROR_SIG;
+        }
+        else if (cmd[0][0] == '|')
         {
             printf("%s: syntax error near unexpected token `%s'\n", SHELL_NAME, cmd[0]);
             fb = ERROR_SIG;
@@ -350,7 +366,8 @@ int parseCommand(char **cmd, pPaths_t paths, int usePipe, int streamPipe[2], pPr
             char *binPath = getBinPath(cmd[0], paths);
             int binState = BIN_FG;
             int subArgC = 0;
-            int gozag = 0;
+            int pipeState;
+            int piping = 0;
 
             if (binPath == NULL)
             {
@@ -364,36 +381,91 @@ int parseCommand(char **cmd, pPaths_t paths, int usePipe, int streamPipe[2], pPr
                     {
                         binState = BIN_BG;
 
-                        executeCommand(binPath, subArgC, cmd, __environ, binState, usePipe, streamPipe, READ_END, proDes);
+                        if (readFromPipe)
+                            pipeState = PIP_READ;
+                        else
+                            pipeState = PIP_NONE;
+
+                        if (pipeCount % 2 == 0)
+                            executeCommand(binPath, subArgC, cmd, __environ, binState, pipeState, pipeB, pipeA, proDes);
+                        else
+                            executeCommand(binPath, subArgC, cmd, __environ, binState, pipeState, pipeA, pipeB, proDes);
+
                         if (subArgC + 1 < argCount)
-                            parseCommand(&(cmd[subArgC + 1]), paths, 0, streamPipe, proDes);
+                            parseCommand(&(cmd[subArgC + 1]), paths, 0, pipeCount, proDes); // Since we read a "&", this command won't cannot pipe to the next one
                         break;
                     }
-                    else if (strcmp(cmd[subArgC], "|") == 0)
+                    else if (strcmp(cmd[subArgC], "|") == 0) // The command will AT LEAST write to STDOUT
                     {
-                        pipe(streamPipe);
-                        gozag = 1;
+                        // The current command is going to send its output to the next one
+                        piping = 1;
 
-                        if (usePipe == 1)
-                        {
-                            executeCommand(binPath, subArgC, cmd, __environ, BIN_FG, 1, streamPipe, WRITE_END, proDes);
-                        }
+                        // TODO: Test if last command is of the form: cmd |
+                        // This could prove troublesome since no command is placed after
+                        // Try in Linux Shell to get ideas
+
+                        /* 
+                         * In order to allow for a command to receive its input from its predecessor and send its output to its successor, it is required
+                         * to use another pipe. So, each command will use two pipes: one for its input and the other for its output.
+                         * > ls -al | grep read | grep readline.c
+                         * 
+                         * ls -al:
+                         *      in: pipeB
+                         *      out: pipeA
+                         * 
+                         * grep read
+                         *      in: pipeA
+                         *      out: pipeB
+                         * 
+                         * grep readline.c
+                         *      in: pipeB
+                         *      out: pipeA
+                         */
+                        if (pipeCount % 2 == 0)
+                            pipe(pipeA);
+                        else
+                            pipe(pipeB);
+
+                        if (readFromPipe)
+                            pipeState = PIP_BOTH;
+                        else
+                            pipeState = PIP_WRITE;
+
+                        // The command was piped
+                        if (pipeCount % 2 == 0)
+                            executeCommand(binPath, subArgC, cmd, __environ, BIN_FG, pipeState, pipeB, pipeA, proDes);
                         else
                         {
-                            executeCommand(binPath, subArgC, cmd, __environ, BIN_FG, 1, streamPipe, BOTH_END, proDes);
+                            executeCommand(binPath, subArgC, cmd, __environ, BIN_FG, pipeState, pipeA, pipeB, proDes);
                         }
 
                         if (subArgC + 1 < argCount)
                         {
-                            parseCommand(&(cmd[subArgC + 1]), paths, 1, streamPipe, proDes);
+                            parseCommand(&(cmd[subArgC + 1]), paths, 1, pipeCount + 1, proDes); // Since it is "|", it pipes the next command
                         }
                         break;
                     }
                 }
 
-                if (binState == BIN_FG && gozag == 0)
+                if (binState == BIN_FG && !piping)
                 {
-                    executeCommand(binPath, subArgC, cmd, __environ, binState, 2, streamPipe, READ_END, proDes);
+                    if (readFromPipe)
+                    {
+                        pipeState = PIP_READ;
+                    }
+                    else
+                    {
+                        pipeState = PIP_NONE;
+                    }
+
+                    if (pipeCount % 2 == 0)
+                    {
+                        executeCommand(binPath, subArgC, cmd, __environ, binState, pipeState, pipeB, pipeA, proDes);
+                    }
+                    else
+                    {
+                        executeCommand(binPath, subArgC, cmd, __environ, binState, pipeState, pipeA, pipeB, proDes);
+                    }
                 }
             }
 
@@ -418,7 +490,7 @@ int parseCommand(char **cmd, pPaths_t paths, int usePipe, int streamPipe[2], pPr
  *
  *  Returns: 0 if all went well
  */
-int executeCommand(char *path, int argc, char **argv, char **envp, int state, int usePipe, int streamPipe[2], int pipeAction, pProgDesc_t proDes)
+int executeCommand(char *path, int argc, char **argv, char **envp, int state, int pipeState, int getPipe[2], int givePipe[2], pProgDesc_t proDes)
 {
     int status, waitRes;
     char **argvCpy;
@@ -453,23 +525,40 @@ int executeCommand(char *path, int argc, char **argv, char **envp, int state, in
             printf("I can manage on my own!\n");
         }*/
 
-        if (usePipe)
+        switch (pipeState)
         {
-            if (pipeAction == READ_END)
-            {
-                dup2(streamPipe[READ_END], STDIN_FILENO);
-                close(streamPipe[WRITE_END]);
-            }
-            else if (pipeAction == WRITE_END)
-            {
-                dup2(streamPipe[WRITE_END], STDOUT_FILENO);
-                close(streamPipe[READ_END]);
-            }
-            else if (pipeAction == BOTH_END)
-            {
-                dup2(streamPipe[WRITE_END], STDOUT_FILENO);
-                dup2(streamPipe[READ_END], STDIN_FILENO);
-            }
+        case PIP_NONE:
+            close(getPipe[WRITE_END]);
+            close(getPipe[READ_END]);
+
+            close(givePipe[WRITE_END]);
+            close(givePipe[READ_END]);
+            break;
+        case PIP_WRITE:
+            //close(getPipe[WRITE_END]);
+            //close(getPipe[READ_END]);
+
+            dup2(givePipe[WRITE_END], STDOUT_FILENO);
+            close(givePipe[READ_END]);
+            break;
+        case PIP_READ:
+            //close(getPipe[WRITE_END]);
+            dup2(getPipe[READ_END], STDIN_FILENO);
+
+            //close(givePipe[WRITE_END]);
+            //close(givePipe[READ_END]);
+            break;
+        case PIP_BOTH:
+            //close(getPipe[WRITE_END]);
+            dup2(getPipe[READ_END], STDIN_FILENO);
+
+            dup2(givePipe[WRITE_END], STDOUT_FILENO);
+            close(givePipe[READ_END]);
+            break;
+        default:
+            fprintf(stderr, "Unknown pipe state");
+            exit(-1);
+            break;
         }
 
         execve(path, argvCpy, envp);
@@ -477,21 +566,46 @@ int executeCommand(char *path, int argc, char **argv, char **envp, int state, in
         exit(EXIT_FAILURE);
         break;
     default: // The current process is the parent
-        if (usePipe == 2)
-        {
-            //close(streamPipe[0]);
-            //close(streamPipe[1]);
-        }
         if (DEBUG)
             printf("Is that you [%s] %d? Your father's right here kiddo!\n", path, childPid);
 
         // If the child process has been executed normally, waits for it to terminate
         if (state == BIN_FG)
         {
-            if (usePipe == 2)
+            switch (pipeState)
             {
-                close(streamPipe[0]);
-                close(streamPipe[1]);
+            case PIP_NONE: // This command did not involve any pipes
+                close(getPipe[WRITE_END]);
+                close(getPipe[READ_END]);
+
+                close(givePipe[WRITE_END]);
+                close(givePipe[READ_END]);
+                break;
+            case PIP_WRITE: // This command is the first to be piped
+                //close(getPipe[WRITE_END]);
+                //close(getPipe[READ_END]);
+
+                close(givePipe[WRITE_END]);
+                //close(givePipe[READ_END]); next program gotta read from there
+                break;
+            case PIP_READ: // The executed command was the last to be piped
+                //close(getPipe[WRITE_END]);
+                close(getPipe[READ_END]);
+
+                //close(givePipe[WRITE_END]);
+                //close(givePipe[READ_END]);
+                break;
+            case PIP_BOTH:
+                //close(getPipe[WRITE_END]);
+                close(getPipe[READ_END]);
+
+                close(givePipe[WRITE_END]);
+                //close(givePipe[READ_END]); The next command gotta read from there
+                break;
+            default:
+                fprintf(stderr, "Unknown pipe state");
+                exit(-1);
+                break;
             }
             waitRes = waitpid(childPid, &status, 0);
             if (waitRes != -1)
