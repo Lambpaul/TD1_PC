@@ -275,10 +275,22 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
 {
     int fb = OK_SIG;
     int argCount;
+    int localArgsCount = 0;
+    int reached = 0;
 
     // Counts command arguments (command name included)
+    // And replaces the "~" character in commands by /home/usr as well
     for (argCount = 0; cmd[argCount] != NULL; argCount++)
-        ;
+    {
+        if (strcmp(cmd[argCount], "~") == 0)
+            cmd[argCount] = getenv("HOME");
+
+        if (!reached && (strcmp(cmd[argCount], "&") == 0 || strcmp(cmd[argCount], "|") == 0))
+            reached = 1;
+
+        if (!reached)
+            localArgsCount++;
+    }
 
     if (DEBUG)
     {
@@ -300,10 +312,13 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
             printf("%s: syntax error near unexpected token `%s'\n", SHELL_NAME, cmd[0]);
             fb = ERROR_SIG;
         }
-        else if (strcmp(cmd[0], "cd") == 0)
+        else if (strcmp(cmd[0], "cd") == 0) // TODO: For cd, print and set, argCount will lead to command failure if there are other commands on the same line
         {
-            if (argCount <= 2)
+            if (localArgsCount <= 2)
             {
+                if (localArgsCount == 1)
+                    cmd[1] = getenv("HOME");
+
                 if (chdir(cmd[1]) == -1)
                 {
                     printf("%s: cd: No such file or directory\n", SHELL_NAME);
@@ -317,9 +332,9 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
         }
         else if (strcmp(cmd[0], "print") == 0)
         {
-            if (argCount <= 2)
+            if (localArgsCount <= 2)
             {
-                if (argCount == 1)
+                if (localArgsCount == 1)
                 {
                     for (int i = 0; __environ[i] != NULL; i++)
                         printf("%s\n", __environ[i]);
@@ -342,11 +357,11 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
         }
         else if (strcmp(cmd[0], "set") == 0)
         {
-            if (argCount == 3)
+            if (localArgsCount == 3)
             {
                 setenv(cmd[1], cmd[2], 1);
             }
-            else if (argCount < 3)
+            else if (localArgsCount < 3)
             {
                 printf("%s: set: not enough arguments\n", SHELL_NAME);
                 fb = ERROR_SIG;
