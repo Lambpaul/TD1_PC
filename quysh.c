@@ -8,9 +8,9 @@
         Paul LAMBERT
     
     @ Last Modification:
-        25-11-2020 (DMY Formats)
+        28-11-2020 (DMY Formats)
  
-    @ Version: 0.97.2 (Pied Piper Version)
+    @ Version: 0.97.3 (Pied Piper Version)
 */
 
 #include <stdio.h>
@@ -28,10 +28,10 @@
 #define BIN_BG 1 // Runs in background
 
 /* Process in/out mode */
-#define PIP_NONE 0  // Current process does not use any pipe
+#define PIP_NONE  0 // Current process does not use any pipe
 #define PIP_WRITE 1 // Current process uses a pipe to pass its STDOUT to the next process
-#define PIP_READ 2  // Current process used a pipe to get its STDIN from the previous process
-#define PIP_BOTH 3  // Current process is both reading and writing from external processes
+#define PIP_READ  2 // Current process used a pipe to get its STDIN from the previous process
+#define PIP_BOTH  3 // Current process is both reading and writing from external processes
 
 /* Pipe ends */
 #define READ_END 0
@@ -244,16 +244,6 @@ int main(int argc, char **argv, char **envp)
 
     free(PATH_RAW_CPY);
 
-    /*
-    for (int i = 0; envp[i] != NULL; i++)
-        printf("env[%d]=%s\n", i, envp[i]);
-    printf("\n");*/
-
-    // set stdout without buffering so what is printed
-    // is printed immediately on the screen.
-    //setvbuf(stdout, NULL, _IONBF, 0);
-    //setbuf(stdout, NULL);
-
     return 0;
 }
 
@@ -279,7 +269,7 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
     int reached = 0;
 
     // Counts command arguments (command name included)
-    // And replaces the "~" character in commands by /home/usr as well
+    // And replaces the "~" character in commands by "/home/usr" as well
     for (argCount = 0; cmd[argCount] != NULL; argCount++)
     {
         if (strcmp(cmd[argCount], "~") == 0)
@@ -527,23 +517,10 @@ int executeCommand(char *path, int argc, char **argv, char **envp, int state, in
         }
         argvCpy[argc] = NULL; // Very important!!
 
-        /*printf("Hi, I am %s.\n", path);
-        if (usePipe)
-        {
-            if (pipeAction == WRITE_END)
-                printf("It looks like I am going to redirect my STDOUT somewhere...\n");
-            else if (pipeAction == READ_END)
-                printf("I am waiting for my STDIN to be delivered by one of my siblings...\n");
-        }
-        else
-        {
-            printf("I can manage on my own!\n");
-        }*/
-
         // TODO: These switches are a mess. Please find the resolve to make them organized, handsome and commented as well.
         switch (pipeState)
         {
-        case PIP_NONE:
+        case PIP_NONE: // Does not use any pipe
             close(getPipe[WRITE_END]);
             close(getPipe[READ_END]);
 
@@ -551,21 +528,14 @@ int executeCommand(char *path, int argc, char **argv, char **envp, int state, in
             close(givePipe[READ_END]);
             break;
         case PIP_WRITE:
-            //close(getPipe[WRITE_END]);
-            //close(getPipe[READ_END]);
-
             dup2(givePipe[WRITE_END], STDOUT_FILENO);
             close(givePipe[READ_END]);
             break;
         case PIP_READ:
-            //close(getPipe[WRITE_END]);
             dup2(getPipe[READ_END], STDIN_FILENO);
-
-            //close(givePipe[WRITE_END]);
-            //close(givePipe[READ_END]);
+            close(getPipe[WRITE_END]);
             break;
         case PIP_BOTH:
-            //close(getPipe[WRITE_END]);
             dup2(getPipe[READ_END], STDIN_FILENO);
 
             dup2(givePipe[WRITE_END], STDOUT_FILENO);
@@ -598,25 +568,15 @@ int executeCommand(char *path, int argc, char **argv, char **envp, int state, in
                 close(givePipe[READ_END]);
                 break;
             case PIP_WRITE: // This command is the first to be piped
-                //close(getPipe[WRITE_END]);
-                //close(getPipe[READ_END]);
-
                 close(givePipe[WRITE_END]);
-                //close(givePipe[READ_END]); next program gotta read from there
                 break;
             case PIP_READ: // The executed command was the last to be piped
-                //close(getPipe[WRITE_END]);
                 close(getPipe[READ_END]);
-
-                //close(givePipe[WRITE_END]);
-                //close(givePipe[READ_END]);
                 break;
             case PIP_BOTH:
-                //close(getPipe[WRITE_END]);
                 close(getPipe[READ_END]);
 
                 close(givePipe[WRITE_END]);
-                //close(givePipe[READ_END]); The next command gotta read from there
                 break;
             default:
                 fprintf(stderr, "Unknown pipe state");

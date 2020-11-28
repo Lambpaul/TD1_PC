@@ -5,6 +5,11 @@
     Paul LAMBERT
 
 Logs:
+
+    Version 0.97.3:
+        + Removed uncessary lines
+        + TODO: Fix '|' and '&' for commands "cd", "print" and "set"
+        + TODO: Shell is not recursive for "cd", "print" and "set"
     
     Version 0.97.2:
         + Implemented a string replace of '~' by content of $HOME
