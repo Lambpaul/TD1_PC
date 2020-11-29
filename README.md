@@ -6,6 +6,12 @@
 
 Logs:
 
+    Version 0.99:
+        + Implemented file redirections through support of '>' and '>>' operators
+        + TODO: Refactor code (pipes and redirections)
+        + TODO: Solve bugs [Shell is UNSTABLE and can be broken]
+        + TODO: Write comments and update function comments of already written function
+
     Version 0.97.3:
         + Removed uncessary lines
         + TODO: Fix '|' and '&' for commands "cd", "print" and "set"

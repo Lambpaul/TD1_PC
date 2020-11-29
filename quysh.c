@@ -8,9 +8,9 @@
         Paul LAMBERT
     
     @ Last Modification:
-        28-11-2020 (DMY Formats)
+        29-11-2020 (DMY Formats)
  
-    @ Version: 0.97.3 (Pied Piper Version)
+    @ Version: 0.99 (File Revolution) [UNSTABLE]
 */
 
 #include <stdio.h>
@@ -28,10 +28,15 @@
 #define BIN_BG 1 // Runs in background
 
 /* Process in/out mode */
-#define PIP_NONE  0 // Current process does not use any pipe
+#define PIP_NONE 0  // Current process does not use any pipe
 #define PIP_WRITE 1 // Current process uses a pipe to pass its STDOUT to the next process
-#define PIP_READ  2 // Current process used a pipe to get its STDIN from the previous process
-#define PIP_BOTH  3 // Current process is both reading and writing from external processes
+#define PIP_READ 2  // Current process used a pipe to get its STDIN from the previous process
+#define PIP_BOTH 3  // Current process is both reading and writing from external processes
+
+/* Process file output mode */
+#define RED_NONE 0  // Current process does not output to a file
+#define RED_OVER 1  // Current process outputs to a file by overriding it
+#define RED_APPE 2  // Current process outputs to a file by appending to it
 
 /* Pipe ends */
 #define READ_END 0
@@ -107,7 +112,7 @@ typedef struct programDescriptor
 } progDesc_t, *pProgDesc_t;
 
 int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pProgDesc_t proDes);
-int executeCommand(char *path, int argc, char **argv, char **envp, int state, int pipeState, int getPipe[2], int givePipe[2], pProgDesc_t proDes);
+int executeCommand(char *path, int argc, char **argv, char **envp, int state, int pipeState, int getPipe[2], int givePipe[2], int redirState, char *outFile, pProgDesc_t proDes);
 char *getPwd();
 char *getBinPath(char *filename, pPaths_t paths);
 int fileExists(char *filename);
@@ -393,9 +398,9 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
 
                         // Swaps the pipes as explained further below
                         if (pipeCount % 2 == 0)
-                            executeCommand(binPath, subArgC, cmd, __environ, binState, pipeState, pipeB, pipeA, proDes);
+                            executeCommand(binPath, subArgC, cmd, __environ, binState, pipeState, pipeB, pipeA, RED_NONE, NULL, proDes);
                         else
-                            executeCommand(binPath, subArgC, cmd, __environ, binState, pipeState, pipeA, pipeB, proDes);
+                            executeCommand(binPath, subArgC, cmd, __environ, binState, pipeState, pipeA, pipeB, RED_NONE, NULL, proDes);
 
                         if (subArgC + 1 < argCount)
                             parseCommand(&(cmd[subArgC + 1]), paths, 0, pipeCount, proDes); // Since we read a "&", this command won't cannot pipe to the next one
@@ -445,13 +450,54 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
                             pipeState = PIP_WRITE;
 
                         if (pipeCount % 2 == 0)
-                            executeCommand(binPath, subArgC, cmd, __environ, BIN_FG, pipeState, pipeB, pipeA, proDes);
+                            executeCommand(binPath, subArgC, cmd, __environ, BIN_FG, pipeState, pipeB, pipeA, RED_NONE, NULL, proDes);
                         else
-                            executeCommand(binPath, subArgC, cmd, __environ, BIN_FG, pipeState, pipeA, pipeB, proDes);
+                            executeCommand(binPath, subArgC, cmd, __environ, BIN_FG, pipeState, pipeA, pipeB, RED_NONE, NULL, proDes);
 
                         if (subArgC + 1 < argCount)
                         {
                             parseCommand(&(cmd[subArgC + 1]), paths, 1, pipeCount + 1, proDes); // Since it is "|", it pipes the next command
+                        }
+                        break;
+                    }
+                    else if (strcmp(cmd[subArgC], ">") == 0)
+                    {
+                        piping = 1;
+
+                        if (pipeCount % 2 == 0)
+                            pipe(pipeA);
+                        else
+                            pipe(pipeB);
+
+                        if (readFromPipe) // Prefixed by '|'
+                            pipeState = PIP_BOTH;
+                        else
+                            pipeState = PIP_WRITE;
+
+                        int redirState;
+
+                        int outFilePos = subArgC + 1;
+
+                        // TODO: gotta prevent this scenario from happening: "some_command >>> a_file"
+                        // The third '>' will be interpreted as the output file name and 'a_file' will be treated as an unknown command
+                        if (strcmp(cmd[outFilePos], ">") == 0)
+                        {
+                            outFilePos++;
+                            redirState = RED_APPE;
+                        }
+                        else
+                        {
+                            redirState = RED_OVER;
+                        }
+
+                        if (pipeCount % 2 == 0)
+                            executeCommand(binPath, subArgC, cmd, __environ, BIN_FG, pipeState, pipeB, pipeA, redirState, cmd[outFilePos], proDes);
+                        else
+                            executeCommand(binPath, subArgC, cmd, __environ, BIN_FG, pipeState, pipeA, pipeB, redirState, cmd[outFilePos], proDes);
+
+                        if (outFilePos + 1 < argCount)
+                        {
+                            parseCommand(&(cmd[outFilePos + 1]), paths, 0, pipeCount + 1, proDes); // Since it is "|", it pipes the next command
                         }
                         break;
                     }
@@ -465,9 +511,9 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
                         pipeState = PIP_NONE;
 
                     if (pipeCount % 2 == 0)
-                        executeCommand(binPath, subArgC, cmd, __environ, binState, pipeState, pipeB, pipeA, proDes);
+                        executeCommand(binPath, subArgC, cmd, __environ, binState, pipeState, pipeB, pipeA, RED_NONE, NULL, proDes);
                     else
-                        executeCommand(binPath, subArgC, cmd, __environ, binState, pipeState, pipeA, pipeB, proDes);
+                        executeCommand(binPath, subArgC, cmd, __environ, binState, pipeState, pipeA, pipeB, RED_NONE, NULL, proDes);
                 }
             }
 
@@ -495,7 +541,7 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
  *
  *  Returns: 0 if all went well
  */
-int executeCommand(char *path, int argc, char **argv, char **envp, int state, int pipeState, int getPipe[2], int givePipe[2], pProgDesc_t proDes)
+int executeCommand(char *path, int argc, char **argv, char **envp, int state, int pipeState, int getPipe[2], int givePipe[2], int redirState, char *outFile, pProgDesc_t proDes)
 {
     int status, waitRes;
     char **argvCpy;
@@ -528,7 +574,17 @@ int executeCommand(char *path, int argc, char **argv, char **envp, int state, in
             close(givePipe[READ_END]);
             break;
         case PIP_WRITE:
-            dup2(givePipe[WRITE_END], STDOUT_FILENO);
+            if (redirState != RED_NONE)
+            {
+                if (redirState == RED_OVER)
+                    freopen(outFile, "w", stdout);
+                else
+                    freopen(outFile, "a+", stdout);
+            }
+            else
+            {
+                dup2(givePipe[WRITE_END], STDOUT_FILENO);
+            }
             close(givePipe[READ_END]);
             break;
         case PIP_READ:
