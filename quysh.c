@@ -10,7 +10,7 @@
     @ Last Modification:
         29-11-2020 (DMY Formats)
  
-    @ Version: 0.99 (File Revolution) [UNSTABLE]
+    @ Version: 0.99.1 (File Revolution)
 */
 
 #include <stdio.h>
@@ -34,9 +34,9 @@
 #define PIP_BOTH 3  // Current process is both reading and writing from external processes
 
 /* Process file output mode */
-#define RED_NONE 0  // Current process does not output to a file
-#define RED_OVER 1  // Current process outputs to a file by overriding it
-#define RED_APPE 2  // Current process outputs to a file by appending to it
+#define RED_NONE 0 // Current process does not output to a file
+#define RED_OVER 1 // Current process outputs to a file by overriding it
+#define RED_APPE 2 // Current process outputs to a file by appending to it
 
 /* Pipe ends */
 #define READ_END 0
@@ -53,6 +53,9 @@ int pipeB[2] = {-1, -1};
 #define ERROR_SIG -1
 #define OK_SIG 0
 #define EXIT_SIG 42
+
+const int SHELL_OPE_COUNT = 3;
+const char SHELL_OPE[3] = {'&', '|', '>'};
 
 /* Shell GUI constants [EDITABLE BY USER] */
 #define ENABLE_COLORS 1
@@ -116,6 +119,7 @@ int executeCommand(char *path, int argc, char **argv, char **envp, int state, in
 char *getPwd();
 char *getBinPath(char *filename, pPaths_t paths);
 int fileExists(char *filename);
+int isOperator(char c);
 int printShellPrefix();
 
 pProgDesc_t newProgramDescriptor();
@@ -297,12 +301,7 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
 
     if (argCount >= 1)
     {
-        if (cmd[0][0] == '&')
-        {
-            printf("%s: syntax error near unexpected token `%s'\n", SHELL_NAME, cmd[0]);
-            fb = ERROR_SIG;
-        }
-        else if (cmd[0][0] == '|')
+        if (isOperator(cmd[0][0]))
         {
             printf("%s: syntax error near unexpected token `%s'\n", SHELL_NAME, cmd[0]);
             fb = ERROR_SIG;
@@ -369,6 +368,8 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
         }
         else if (strcmp(cmd[0], "exit") == 0)
         {
+            if (DEBUG)
+                printf("%s: Successfully exited\n", SHELL_NAME);
             fb = EXIT_SIG;
         }
         else
@@ -378,6 +379,19 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
             int subArgC = 0;
             int pipeState;
             int piping = 0;
+            int *getPipe, *givePipe;
+
+            // Swaps the pipes as explained further below
+            if (pipeCount % 2 == 0)
+            {
+                getPipe = pipeB;
+                givePipe = pipeA;
+            }
+            else
+            {
+                getPipe = pipeA;
+                givePipe = pipeB;
+            }
 
             if (binPath == NULL)
             {
@@ -396,11 +410,7 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
                         else
                             pipeState = PIP_NONE;
 
-                        // Swaps the pipes as explained further below
-                        if (pipeCount % 2 == 0)
-                            executeCommand(binPath, subArgC, cmd, __environ, binState, pipeState, pipeB, pipeA, RED_NONE, NULL, proDes);
-                        else
-                            executeCommand(binPath, subArgC, cmd, __environ, binState, pipeState, pipeA, pipeB, RED_NONE, NULL, proDes);
+                        executeCommand(binPath, subArgC, cmd, __environ, binState, pipeState, getPipe, givePipe, RED_NONE, NULL, proDes);
 
                         if (subArgC + 1 < argCount)
                             parseCommand(&(cmd[subArgC + 1]), paths, 0, pipeCount, proDes); // Since we read a "&", this command won't cannot pipe to the next one
@@ -424,7 +434,7 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
                          * > ls -al | grep read | grep readline.c
                          * 
                          * ls -al:
-                         *      in: pipeB (unushed) -> uses STDIN instead
+                         *      in: pipeB (unused) -> uses STDIN instead
                          *      out: pipeA
                          * 
                          * grep read
@@ -440,19 +450,26 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
                          * will be the same as "grep read".
                          */
                         if (pipeCount % 2 == 0)
-                            pipe(pipeA);
+                        {
+                            if (pipe(pipeA) < 0)
+                            {
+                                fprintf(stderr, "pipe A creation failed\n");
+                            }
+                        }
                         else
-                            pipe(pipeB);
+                        {
+                            if (pipe(pipeB) < 0)
+                            {
+                                fprintf(stderr, "pipe B creation failed\n");
+                            }
+                        }
 
                         if (readFromPipe) // Prefixed by '|'
                             pipeState = PIP_BOTH;
                         else
                             pipeState = PIP_WRITE;
 
-                        if (pipeCount % 2 == 0)
-                            executeCommand(binPath, subArgC, cmd, __environ, BIN_FG, pipeState, pipeB, pipeA, RED_NONE, NULL, proDes);
-                        else
-                            executeCommand(binPath, subArgC, cmd, __environ, BIN_FG, pipeState, pipeA, pipeB, RED_NONE, NULL, proDes);
+                        executeCommand(binPath, subArgC, cmd, __environ, BIN_FG, pipeState, getPipe, givePipe, RED_NONE, NULL, proDes);
 
                         if (subArgC + 1 < argCount)
                         {
@@ -462,12 +479,8 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
                     }
                     else if (strcmp(cmd[subArgC], ">") == 0)
                     {
+                        // The current command is going to send its output to a file
                         piping = 1;
-
-                        if (pipeCount % 2 == 0)
-                            pipe(pipeA);
-                        else
-                            pipe(pipeB);
 
                         if (readFromPipe) // Prefixed by '|'
                             pipeState = PIP_BOTH;
@@ -478,26 +491,28 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
 
                         int outFilePos = subArgC + 1;
 
-                        // TODO: gotta prevent this scenario from happening: "some_command >>> a_file"
-                        // The third '>' will be interpreted as the output file name and 'a_file' will be treated as an unknown command
+                        // If the operator is '>>' instead of '>'
                         if (strcmp(cmd[outFilePos], ">") == 0)
                         {
                             outFilePos++;
+                            // If the operator is '>>>' or any weird stuff like that
+                            if (isOperator(cmd[outFilePos][0]))
+                            {
+                                printf("%s: syntax error near unexpected token `%c'\n", SHELL_NAME, cmd[outFilePos][0]);
+                                free(binPath);
+                                return ERROR_SIG;
+                            }
                             redirState = RED_APPE;
                         }
                         else
                         {
                             redirState = RED_OVER;
                         }
+                        executeCommand(binPath, subArgC, cmd, __environ, BIN_FG, pipeState, getPipe, givePipe, redirState, cmd[outFilePos], proDes);
 
-                        if (pipeCount % 2 == 0)
-                            executeCommand(binPath, subArgC, cmd, __environ, BIN_FG, pipeState, pipeB, pipeA, redirState, cmd[outFilePos], proDes);
-                        else
-                            executeCommand(binPath, subArgC, cmd, __environ, BIN_FG, pipeState, pipeA, pipeB, redirState, cmd[outFilePos], proDes);
-
-                        if (outFilePos + 1 < argCount)
+                        if (outFilePos + 2 < argCount)
                         {
-                            parseCommand(&(cmd[outFilePos + 1]), paths, 0, pipeCount + 1, proDes); // Since it is "|", it pipes the next command
+                            parseCommand(&(cmd[outFilePos + 2]), paths, 0, pipeCount, proDes); // Since it is "|", it pipes the next command
                         }
                         break;
                     }
@@ -505,15 +520,17 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
 
                 if (binState == BIN_FG && !piping)
                 {
+                    if (DEBUG)
+                    {
+                        printf("%d pipes were found in the command line\n", pipeCount);
+                    }
+
                     if (readFromPipe)
                         pipeState = PIP_READ;
                     else
                         pipeState = PIP_NONE;
 
-                    if (pipeCount % 2 == 0)
-                        executeCommand(binPath, subArgC, cmd, __environ, binState, pipeState, pipeB, pipeA, RED_NONE, NULL, proDes);
-                    else
-                        executeCommand(binPath, subArgC, cmd, __environ, binState, pipeState, pipeA, pipeB, RED_NONE, NULL, proDes);
+                    executeCommand(binPath, subArgC, cmd, __environ, binState, pipeState, getPipe, givePipe, RED_NONE, NULL, proDes);
                 }
             }
 
@@ -538,6 +555,8 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
  *  pipeState:  Determines the IO actions of the command (Refer to the enumerations at the top of this file for further information)
  *  getPipe:    The pipe from which the command will potentially read (getPipe > STDIN)
  *  givePipe:   The pipe to which the command will eventually write (STDOUT > givePipe)
+ *  redirState: Determines if and how the program outputs goes to a file (Refer to the enumerations at the top for further information)
+ *  outFile:    The name of file in which the command output will be redirected (NULL if the command output is not redirected to a file)
  *
  *  Returns: 0 if all went well
  */
@@ -593,8 +612,18 @@ int executeCommand(char *path, int argc, char **argv, char **envp, int state, in
             break;
         case PIP_BOTH:
             dup2(getPipe[READ_END], STDIN_FILENO);
+            if (redirState != RED_NONE)
+            {
+                if (redirState == RED_OVER)
+                    freopen(outFile, "w", stdout);
+                else
+                    freopen(outFile, "a+", stdout);
+            }
+            else
+            {
+                dup2(givePipe[WRITE_END], STDOUT_FILENO);
+            }
 
-            dup2(givePipe[WRITE_END], STDOUT_FILENO);
             close(givePipe[READ_END]);
             break;
         default:
@@ -609,7 +638,7 @@ int executeCommand(char *path, int argc, char **argv, char **envp, int state, in
         break;
     default: // The current process is the parent
         if (DEBUG)
-            printf("Is that you [%s] %d? Your father's right here kiddo!\n", path, childPid);
+            printf("Is that you [%s] %d? Your father is right here kiddo!\n", path, childPid);
 
         // If the child process has been executed normally, waits for it to terminate
         if (state == BIN_FG)
@@ -725,6 +754,24 @@ char *getBinPath(char *filename, pPaths_t paths)
 inline int fileExists(char *filename)
 {
     return (access(filename, F_OK) != -1);
+}
+
+/*
+ * Function: isOperator
+ * --------------------
+ * Determines whether or not the given character corresponds to one of the Shell operators
+ * 
+ *  c:       The character to test
+ * 
+ *  Returns: 1 if c is a Shell operator, 0 otherwise
+ */
+int isOperator(char c)
+{
+    for (int i = 0; i < SHELL_OPE_COUNT; i++)
+        if (SHELL_OPE[i] == c)
+            return 1;
+
+    return 0;
 }
 
 /*
