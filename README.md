@@ -4,6 +4,8 @@
     Corentin HUMBERT
     Paul LAMBERT
 
+The Shell code can be found in file titled "quysh.c"
+
 Logs:
 
     Version 0.99.1 (File Revolution):
