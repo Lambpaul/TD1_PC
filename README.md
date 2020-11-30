@@ -8,6 +8,11 @@ The Shell code can be found in file titled "quysh.c"
 
 Logs:
 
+    Version 1.0.0 (Beyond-Grub):
+        + Removed native print command
+        + Implemented environment variable as command arguments:
+            - The equivalent of "print VAR" is now "echo $VAR"
+
     Version 0.99.1 (File Revolution):
         + Fixed bugs with '>' and '>>':
             - '>>>', '>>&' or '>>|' will now output an error

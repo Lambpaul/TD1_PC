@@ -8,9 +8,9 @@
         Paul LAMBERT
     
     @ Last Modification:
-        29-11-2020 (DMY Formats)
+        30-11-2020 (DMY Formats)
  
-    @ Version: 0.99.1 (File Revolution)
+    @ Version: 1.0.0 (Beyond-Grub)
 */
 
 #include <stdio.h>
@@ -284,6 +284,21 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
         if (strcmp(cmd[argCount], "~") == 0)
             cmd[argCount] = getenv("HOME");
 
+        /* If '$X' is found, we treat the associated string X as a potential
+         * environment variable and replace '$X' with the value of 'X'
+         */
+        if (cmd[argCount][0] == '$')
+        {
+            char *pt = cmd[argCount];
+            const char *envVarName = pt + 1;
+            char *envVar = getenv(envVarName);
+
+            if (envVar == NULL)
+                envVar = "";
+
+            cmd[argCount] = envVar;
+        }
+
         if (!reached && (strcmp(cmd[argCount], "&") == 0 || strcmp(cmd[argCount], "|") == 0))
             reached = 1;
 
@@ -306,7 +321,7 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
             printf("%s: syntax error near unexpected token `%s'\n", SHELL_NAME, cmd[0]);
             fb = ERROR_SIG;
         }
-        else if (strcmp(cmd[0], "cd") == 0) // TODO: For cd, print and set, argCount will lead to command failure if there are other commands on the same line
+        else if (strcmp(cmd[0], "cd") == 0) // TODO: For cd and set, argCount will lead to command failure if there are other commands on the same line
         {
             if (localArgsCount <= 2)
             {
@@ -322,31 +337,6 @@ int parseCommand(char **cmd, pPaths_t paths, int readFromPipe, int pipeCount, pP
             {
                 printf("%s: cd: too many arguments\n", SHELL_NAME);
                 fb = ERROR_SIG;
-            }
-        }
-        else if (strcmp(cmd[0], "print") == 0)
-        {
-            if (localArgsCount <= 2)
-            {
-                if (localArgsCount == 1)
-                {
-                    for (int i = 0; __environ[i] != NULL; i++)
-                        printf("%s\n", __environ[i]);
-                }
-                else
-                {
-                    char *var = getenv(cmd[1]);
-
-                    if (var == NULL)
-                        printf("\n");
-                    else
-                        printf("%s\n", getenv(cmd[1]));
-                }
-            }
-            else
-            {
-                printf("%s: print: too many arguments\n", SHELL_NAME);
-                fb = -1;
             }
         }
         else if (strcmp(cmd[0], "set") == 0)
